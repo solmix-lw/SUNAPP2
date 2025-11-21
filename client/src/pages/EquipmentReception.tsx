@@ -96,7 +96,6 @@ export default function EquipmentReception() {
     let updatedFormData = {
       ...driverFormData,
       equipmentId: equip.id,
-      plantNumber: equip.plantNumber || "",
       projectArea: equip.projectArea || "",
     };
     
@@ -602,11 +601,9 @@ export default function EquipmentReception() {
                       <p className="text-sm text-muted-foreground">
                         Make: {equip.make} | Asset: {equip.assetNo} | Plate: {equip.plateNo}
                       </p>
-                      {(equip.plantNumber || equip.projectArea) && (
+                      {equip.projectArea && (
                         <p className="text-sm text-muted-foreground mt-1">
-                          {equip.plantNumber && `Plant: ${equip.plantNumber}`}
-                          {equip.plantNumber && equip.projectArea && " | "}
-                          {equip.projectArea && `Project: ${equip.projectArea}`}
+                          Project: {equip.projectArea}
                         </p>
                       )}
                     </div>

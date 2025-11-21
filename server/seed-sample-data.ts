@@ -201,7 +201,6 @@ export async function seedSampleData() {
       try {
         const category = existingCategories[i % existingCategories.length];
         const [equip] = await db.insert(equipment).values({
-          plantNumber: `PLT-${equipNum}`,
           name: `${type} ${equipNum}`,
           categoryId: category?.id,
           manufacturer: i % 2 === 0 ? 'Caterpillar' : 'Komatsu',

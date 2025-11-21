@@ -1203,7 +1203,7 @@ export default function ForemanDashboard() {
                   </div>
                   <div>
                     <Label className="text-muted-foreground text-sm">Equipment:</Label>
-                    <p className="font-medium mt-1">{inspectionDetails.reception?.equipment?.model || inspectionDetails.reception?.equipment?.plantNumber || "N/A"}</p>
+                    <p className="font-medium mt-1">{inspectionDetails.reception?.equipment?.model || inspectionDetails.reception?.equipment?.plateNo || "N/A"}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground text-sm">Plant Number:</Label>

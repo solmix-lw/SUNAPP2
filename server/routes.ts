@@ -2,11 +2,11 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { eq, or, ilike, sql, desc, and } from "drizzle-orm";
+import { eq, or, ilike, sql, desc, and, inArray, gte, lte } from "drizzle-orm";
 import { z } from "zod";
-import { 
+import {
   insertEquipmentCategorySchema,
-  insertEquipmentSchema, 
+  insertEquipmentSchema,
   insertSparePartSchema,
   insertMechanicSchema,
   insertMaintenanceRecordSchema,
@@ -45,7 +45,10 @@ import {
   spareParts,
   employees,
   partsReceipts,
+  workOrderMemberships,
+  workOrderTimeTracking,
 } from "@shared/schema";
+import type { Employee } from "@shared/schema";
 import multer from "multer";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
@@ -69,7 +72,7 @@ import {
 } from "./excel-utils";
 
 // Configure multer for memory storage
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 30 * 1024 * 1024 }, // 30MB limit for images
   fileFilter: (_req, file, cb) => {
@@ -83,7 +86,7 @@ const upload = multer({
 });
 
 // Configure multer for video uploads
-const uploadVideo = multer({ 
+const uploadVideo = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 1000 * 1024 * 1024 }, // 1000MB (1GB) limit for videos
   fileFilter: (_req, file, cb) => {
@@ -97,7 +100,7 @@ const uploadVideo = multer({
 });
 
 // Configure multer for 3D model files
-const upload3DModel = multer({ 
+const upload3DModel = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit for 3D models
   fileFilter: (_req, file, cb) => {
@@ -110,7 +113,7 @@ const upload3DModel = multer({
     ];
     const allowedExtensions = ['.glb', '.gltf', '.obj'];
     const fileExtension = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
-    
+
     if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
       cb(null, true);
     } else {
@@ -120,7 +123,7 @@ const upload3DModel = multer({
 });
 
 // Configure multer for Excel file uploads (import)
-const uploadExcel = multer({ 
+const uploadExcel = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for Excel files
   fileFilter: (_req, file, cb) => {
@@ -132,7 +135,7 @@ const uploadExcel = multer({
     ];
     const allowedExtensions = ['.xls', '.xlsx', '.csv'];
     const fileExtension = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
-    
+
     if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
       cb(null, true);
     } else {
@@ -174,13 +177,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { username, password, language } = req.body;
-      
+
       if (!username || !password) {
         return res.status(400).json({ message: "Username and password required" });
       }
 
       const user = await verifyCredentials(username, password);
-      
+
       if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
@@ -193,10 +196,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const token = generateToken(user);
       const { password: _, ...userWithoutPassword } = user;
-      
-      res.json({ 
+
+      res.json({
         user: userWithoutPassword,
-        token 
+        token
       });
     } catch (error) {
       res.status(500).json({ message: "Authentication error" });
@@ -211,15 +214,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/me", async (req, res) => {
     if (req.user) {
       const { password, ...userWithoutPassword } = req.user as any;
-      
+
       // Fetch user's page permissions
       try {
         const permissions = await storage.getEmployeePagePermissions(req.user.id);
-        res.json({ 
-          user: { 
+        res.json({
+          user: {
             ...userWithoutPassword,
-            pagePermissions: permissions 
-          } 
+            pagePermissions: permissions
+          }
         });
       } catch (error) {
         console.error("Error fetching user permissions:", error);
@@ -239,13 +242,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { language } = req.body;
-      
+
       if (!language || (language !== 'en' && language !== 'am')) {
         return res.status(400).json({ message: "Invalid language. Must be 'en' or 'am'" });
       }
 
       await storage.updateUserLanguage(req.user.id, language);
-      
+
       res.json({ message: "Language preference updated successfully" });
     } catch (error) {
       console.error("Error updating language preference:", error);
@@ -257,14 +260,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/equipment-categories", async (req, res) => {
     try {
       const categories = await storage.getAllEquipmentCategories();
-      
+
       // Prevent caching to ensure fresh data
       res.set({
         'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
       });
-      
+
       res.json(categories);
     } catch (error) {
       console.error("Error fetching equipment categories:", error);
@@ -290,7 +293,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentCategorySchema.parse(req.body);
       const category = await storage.createEquipmentCategory(validatedData);
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -301,7 +304,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validatedData
         ));
       }
-      
+
       res.status(201).json(category);
     } catch (error) {
       console.error("Error creating equipment category:", error);
@@ -314,11 +317,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentCategorySchema.partial().parse(req.body);
       const category = await storage.updateEquipmentCategory(req.params.id, validatedData);
-      
+
       if (!category) {
         return res.status(404).json({ error: "Category not found" });
       }
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -329,7 +332,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validatedData
         ));
       }
-      
+
       res.json(category);
     } catch (error) {
       console.error("Error updating equipment category:", error);
@@ -341,11 +344,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/equipment-categories/:id", isCEOOrAdmin, async (req, res) => {
     try {
       const deleted = await storage.deleteEquipmentCategory(req.params.id);
-      
+
       if (!deleted) {
         return res.status(404).json({ error: "Category not found" });
       }
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -356,7 +359,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { id: req.params.id }
         ));
       }
-      
+
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting equipment category:", error);
@@ -368,18 +371,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/equipment-categories", isCEOOrAdmin, async (req, res) => {
     try {
       const deletedCount = await storage.deleteAllEquipmentCategories();
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted',
-          'equipment_categories_bulk',
+          'equipment_category',
           'all',
           req.user.username || 'unknown',
           { deletedCount }
         ));
       }
-      
+
       res.json({ success: true, deletedCount });
     } catch (error) {
       console.error("Error deleting all equipment categories:", error);
@@ -404,82 +407,163 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Import equipment from Excel
   app.post("/api/equipment/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
+      let result: any;
+
+      // Check if we have JSON data from the preview dialog
+      if (req.body.equipment) {
+        // Validate the JSON data
+        const equipmentList = req.body.equipment;
+        if (!Array.isArray(equipmentList)) {
+          return res.status(400).json({ error: "Invalid data format: expected array" });
+        }
+
+        // We can treat this as "validated" data since it came from the preview, 
+        // but we should still ensure it matches the schema if possible.
+        // For now, we'll trust the structure matches InsertEquipment.
+        result = {
+          data: equipmentList,
+          errors: [],
+          summary: {
+            total: equipmentList.length,
+            valid: equipmentList.length,
+            invalid: 0,
+            ignored: 0
+          }
+        };
+      } else if (req.file) {
+        // Parse Excel file
+        const rawData = parseExcelFile(req.file.buffer);
+
+        // Validate and transform data
+        result = validateAndTransformExcelData(
+          rawData,
+          equipmentTemplateConfig,
+          insertEquipmentSchema.partial({ categoryId: true }),
+          (row) => {
+            const hasPriceValue =
+              row.price !== undefined && row.price !== null && row.price !== "";
+            const numericPrice = hasPriceValue ? Number(row.price) : undefined;
+
+            return {
+              ...row,
+              price:
+                numericPrice !== undefined && !Number.isNaN(numericPrice)
+                  ? numericPrice.toString()
+                  : undefined,
+            };
+          }
+        );
+      } else {
+        return res.status(400).json({ error: "No file uploaded or data provided" });
       }
 
-      // Parse Excel file
-      const rawData = parseExcelFile(req.file.buffer);
-
-      // Validate and transform data
-      const result = validateAndTransformExcelData(
-        rawData,
-        equipmentTemplateConfig,
-        insertEquipmentSchema.partial({ categoryId: true }),
-        (row) => ({
-          ...row,
-          price: row.price ? parseFloat(row.price) : undefined,
-        })
-      );
-
-      if (!result.success || !result.data) {
+      // Allow partial imports - proceed if we have any valid data
+      if (!result.data || result.data.length === 0) {
         return res.status(400).json({
-          error: "Validation failed",
+          error: "No valid data found to import",
           errors: result.errors,
           summary: result.summary,
         });
       }
 
       // Bulk insert using transaction
-      const importResults = await db.transaction(async (tx) => {
+      const importResults = await db.transaction(async (tx: any) => {
         let created = 0;
         let updated = 0;
         let skipped = 0;
         const errors: any[] = [];
 
-        for (const equip of result.data) {
-          try {
-            // Check if equipment already exists (by assetNo or plateNo)
-            let existing = null;
-            if (equip.assetNo) {
-              existing = await tx.query.equipment.findFirst({
-                where: eq(equipment.assetNo, equip.assetNo),
-              });
-            }
-            if (!existing && equip.plateNo) {
-              existing = await tx.query.equipment.findFirst({
-                where: eq(equipment.plateNo, equip.plateNo),
-              });
-            }
+        // Added check to ensure result.data is defined
+        if (!result.data) {
+          throw new Error("Validated data is undefined");
+        }
 
-            if (existing) {
-              // Update existing equipment
-              await tx.update(equipment)
-                .set(equip)
-                .where(eq(equipment.id, existing.id));
-              updated++;
-            } else {
-              // Insert new equipment
-              await tx.insert(equipment).values(equip);
-              created++;
+        // Optimization: Bulk fetch existing equipment
+        const assetNos = result.data.map((e: any) => e.assetNo).filter(Boolean) as string[];
+        const plateNos = result.data.map((e: any) => e.plateNo).filter(Boolean) as string[];
+
+        const existingEquipment = await tx.query.equipment.findMany({
+          where: or(
+            assetNos.length > 0 ? inArray(equipment.assetNo, assetNos) : undefined,
+            plateNos.length > 0 ? inArray(equipment.plateNo, plateNos) : undefined
+          )
+        });
+
+        const existingMap = new Map();
+        existingEquipment.forEach((e: any) => {
+          if (e.assetNo) existingMap.set(`asset:${e.assetNo}`, e);
+          if (e.plateNo) existingMap.set(`plate:${e.plateNo}`, e);
+        });
+
+        const toInsert: any[] = [];
+        const toUpdate: any[] = [];
+
+        for (const equip of result.data) {
+          // Check if equipment already exists
+          let existing = null;
+          if (equip.assetNo && existingMap.has(`asset:${equip.assetNo}`)) {
+            existing = existingMap.get(`asset:${equip.assetNo}`);
+          } else if (equip.plateNo && existingMap.has(`plate:${equip.plateNo}`)) {
+            existing = existingMap.get(`plate:${equip.plateNo}`);
+          }
+
+          if (existing) {
+            toUpdate.push({ ...equip, id: existing.id });
+          } else {
+            toInsert.push(equip);
+          }
+        }
+
+        // Bulk Insert
+        if (toInsert.length > 0) {
+          try {
+            // Insert in chunks of 100 to avoid parameter limits
+            for (let i = 0; i < toInsert.length; i += 100) {
+              const chunk = toInsert.slice(i, i + 100);
+              await tx.insert(equipment).values(chunk);
+              created += chunk.length;
             }
+          } catch (error) {
+            console.error("Bulk insert error:", error);
+            // Fallback to individual inserts if bulk fails
+            for (const item of toInsert) {
+              try {
+                await tx.insert(equipment).values(item);
+                created++;
+              } catch (e) {
+                skipped++;
+                errors.push({
+                  assetNo: item.assetNo || item.plateNo,
+                  error: e instanceof Error ? e.message : 'Insert error',
+                });
+              }
+            }
+          }
+        }
+
+        // Parallel Updates
+        await Promise.all(toUpdate.map(async (item) => {
+          try {
+            const { id, ...data } = item;
+            await tx.update(equipment)
+              .set(data)
+              .where(eq(equipment.id, id));
+            updated++;
           } catch (error) {
             skipped++;
             errors.push({
-              assetNo: equip.assetNo || equip.plateNo,
-              error: error instanceof Error ? error.message : 'Unknown error',
+              assetNo: item.assetNo || item.plateNo,
+              error: error instanceof Error ? error.message : 'Update error',
             });
           }
-        }
+        }));
 
         return { created, updated, skipped, errors };
       });
 
       res.json({
         success: true,
-        message: "Import completed",
-        results: importResults,
-        summary: result.summary,
+        results: importResults
       });
     } catch (error) {
       console.error("Error importing equipment:", error);
@@ -487,7 +571,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Equipment endpoints with server-side search
   app.get("/api/equipment", async (req, res) => {
     try {
       const searchTerm = req.query.search as string | undefined;
@@ -510,7 +593,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Pragma': 'no-cache',
         'Expires': '0'
       });
-      
+
       res.json(result.items);
     } catch (error) {
       console.error("Error fetching equipment:", error);
@@ -536,7 +619,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentSchema.parse(req.body);
       const equipment = await storage.createEquipment(validatedData);
-      
+
       // Send email notification if user is admin (CEO gets notified about admin actions)
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -547,7 +630,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validatedData
         ));
       }
-      
+
       res.status(201).json(equipment);
     } catch (error) {
       console.error("Error creating equipment:", error);
@@ -560,11 +643,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentSchema.parse(req.body);
       const equipment = await storage.updateEquipment(req.params.id, validatedData);
-      
+
       if (!equipment) {
         return res.status(404).json({ error: "Equipment not found" });
       }
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -575,7 +658,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           validatedData
         ));
       }
-      
+
       res.json(equipment);
     } catch (error) {
       console.error("Error updating equipment:", error);
@@ -587,11 +670,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/equipment/:id", isCEOOrAdmin, async (req, res) => {
     try {
       const deleted = await storage.deleteEquipment(req.params.id);
-      
+
       if (!deleted) {
         return res.status(404).json({ error: "Equipment not found" });
       }
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -602,7 +685,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { id: req.params.id }
         ));
       }
-      
+
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting equipment:", error);
@@ -614,18 +697,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/equipment/delete-all", isCEOOrAdmin, async (req, res) => {
     try {
       const deletedCount = await storage.deleteAllEquipment();
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted',
-          'equipment_bulk',
+          'equipment',
           'all',
           req.user.username || 'unknown',
           { deletedCount }
         ));
       }
-      
+
       res.json({ success: true, deletedCount });
     } catch (error) {
       console.error("Error deleting all equipment:", error);
@@ -637,13 +720,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/equipment/delete-by-type", isCEOOrAdmin, async (req, res) => {
     try {
       const { equipmentType } = req.body;
-      
+
       if (!equipmentType) {
         return res.status(400).json({ error: "Equipment type is required" });
       }
-      
+
       const deletedCount = await storage.deleteEquipmentByType(equipmentType);
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -654,7 +737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { equipmentType, deletedCount }
         ));
       }
-      
+
       res.json({ success: true, deletedCount });
     } catch (error) {
       console.error("Error deleting equipment by type:", error);
@@ -666,19 +749,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/equipment/import", isCEOOrAdmin, async (req, res) => {
     try {
       const { equipment: equipmentList } = req.body;
-      
+
       if (!Array.isArray(equipmentList) || equipmentList.length === 0) {
         return res.status(400).json({ error: "Invalid equipment list" });
       }
-      
+
       // Validate all equipment data
       const validatedEquipment = equipmentList.map(item => insertEquipmentSchema.parse(item));
-      
+
       // Create all equipment
       const created = await Promise.all(
         validatedEquipment.map(data => storage.createEquipment(data))
       );
-      
+
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
@@ -689,11 +772,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
           { action: 'bulk import', count: created.length }
         ));
       }
-      
+
       res.status(201).json({ success: true, count: created.length, equipment: created });
     } catch (error) {
       console.error("Error importing equipment:", error);
       res.status(400).json({ error: "Invalid equipment data" });
+    }
+  });
+
+  // Import spare parts from Excel (or JSON preview)
+  app.post("/api/parts/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
+    try {
+      let partsToImport: any[] = [];
+
+      if (req.body.parts) {
+        // Handle JSON payload from preview dialog
+        partsToImport = req.body.parts;
+      } else if (req.file) {
+        // Handle direct file upload (legacy/fallback)
+        const rawData = parseExcelFile(req.file.buffer);
+        const result = validateAndTransformExcelData(
+          rawData,
+          sparePartsTemplateConfig,
+          insertSparePartSchema.partial(),
+          (row) => {
+            const hasPriceValue =
+              row.price !== undefined && row.price !== null && row.price !== "";
+            const numericPrice = hasPriceValue ? Number(row.price) : null;
+
+            const hasStockValue =
+              row.stockQuantity !== undefined &&
+              row.stockQuantity !== null &&
+              row.stockQuantity !== "";
+            const numericStock = hasStockValue ? Number(row.stockQuantity) : 0;
+
+            return {
+              ...row,
+              price: numericPrice,
+              stockQuantity: numericStock,
+            };
+          }
+        );
+
+        if (!result.success) {
+          return res.status(400).json({
+            error: "Validation failed",
+            errors: result.errors,
+            summary: result.summary,
+          });
+        }
+        partsToImport = result.data || [];
+      } else if (req.body.parts && Array.isArray(req.body.parts)) {
+        // Handle JSON body (from preview confirmation)
+        partsToImport = req.body.parts;
+      } else {
+        return res.status(400).json({ error: "No file uploaded or data provided" });
+      }
+
+      if (partsToImport.length === 0) {
+        return res.status(400).json({ error: "No valid data found to import" });
+      }
+
+      // Process import (transaction)
+      const importResults = await db.transaction(async (tx: any) => {
+        let created = 0;
+        let updated = 0;
+        let skipped = 0;
+        const errors: any[] = [];
+
+        for (const part of partsToImport) {
+          try {
+            // Check if part exists by partNumber
+            const existing = await tx.query.spareParts.findFirst({
+              where: eq(spareParts.partNumber, part.partNumber),
+            });
+
+            if (existing) {
+              await tx.update(spareParts)
+                .set(part)
+                .where(eq(spareParts.id, existing.id));
+              updated++;
+            } else {
+              await tx.insert(spareParts).values(part);
+              created++;
+            }
+          } catch (error) {
+            skipped++;
+            errors.push({
+              partNumber: part.partNumber,
+              error: error instanceof Error ? error.message : 'Import error',
+            });
+          }
+        }
+        return { created, updated, skipped, errors };
+      });
+
+      res.json({
+        success: true,
+        results: importResults
+      });
+
+    } catch (error) {
+      console.error("Error importing parts:", error);
+      res.status(500).json({ error: "Failed to import parts" });
     }
   });
 
@@ -706,88 +887,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.setHeader('Content-Disposition', 'attachment; filename=spare_parts_template.xlsx');
       res.send(buffer);
     } catch (error) {
-      console.error("Error generating spare parts template:", error);
       res.status(500).json({ error: "Failed to generate template" });
-    }
-  });
-
-  // Import spare parts from Excel
-  app.post("/api/parts/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      // Parse Excel file
-      const rawData = parseExcelFile(req.file.buffer);
-
-      // Validate and transform data
-      const result = validateAndTransformExcelData(
-        rawData,
-        sparePartsTemplateConfig,
-        insertSparePartSchema.partial(),
-        (row) => ({
-          ...row,
-          price: row.price ? parseFloat(row.price) : undefined,
-          stockQuantity: row.stockQuantity ? parseInt(row.stockQuantity) : 0,
-          stockStatus: 'in_stock',
-        })
-      );
-
-      if (!result.success || !result.data) {
-        return res.status(400).json({
-          error: "Validation failed",
-          errors: result.errors,
-          summary: result.summary,
-        });
-      }
-
-      // Bulk insert using transaction
-      const importResults = await db.transaction(async (tx) => {
-        let created = 0;
-        let updated = 0;
-        let skipped = 0;
-        const errors: any[] = [];
-
-        for (const part of result.data) {
-          try {
-            // Check if part already exists
-            const existing = await tx.query.spareParts.findFirst({
-              where: eq(spareParts.partNumber, part.partNumber),
-            });
-
-            if (existing) {
-              // Update existing part
-              await tx.update(spareParts)
-                .set(part)
-                .where(eq(spareParts.partNumber, part.partNumber));
-              updated++;
-            } else {
-              // Insert new part
-              await tx.insert(spareParts).values(part);
-              created++;
-            }
-          } catch (error) {
-            skipped++;
-            errors.push({
-              partNumber: part.partNumber,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            });
-          }
-        }
-
-        return { created, updated, skipped, errors };
-      });
-
-      res.json({
-        success: true,
-        message: "Import completed",
-        results: importResults,
-        summary: result.summary,
-      });
-    } catch (error) {
-      console.error("Error importing spare parts:", error);
-      res.status(500).json({ error: "Failed to import spare parts" });
     }
   });
 
@@ -832,13 +932,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertSparePartSchema.parse(req.body);
       const part = await storage.createPart(validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'spare_part', part.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(part);
     } catch (error) {
       console.error("Error creating part:", error);
@@ -853,13 +953,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'spare_part', part.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.json(part);
     } catch (error) {
       console.error("Error updating part:", error);
@@ -871,19 +971,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const partId = req.params.id;
       const part = await storage.getPartById(partId);
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
-      
+
       await storage.deletePart(partId);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted', 'spare_part', partId, req.user.username || 'unknown', { partNumber: part.partNumber, partName: part.partName }
         ));
       }
-      
+
       res.json({ success: true, message: "Part deleted successfully" });
     } catch (error) {
       console.error("Error deleting part:", error);
@@ -900,7 +1000,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const partId = req.params.id;
       const part = await storage.getPartById(partId);
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
@@ -908,7 +1008,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Generate unique filename with part number
       const fileExtension = req.file.originalname.substring(req.file.originalname.lastIndexOf('.'));
       const fileName = `${part.partNumber}-${nanoid(8)}${fileExtension}`;
-      
+
       // Get the public object storage path
       const publicPath = process.env.PUBLIC_OBJECT_SEARCH_PATHS?.split(',')[0] || '';
       if (!publicPath) {
@@ -932,7 +1032,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ));
       }
 
-      res.json({ 
+      res.json({
         message: "3D model uploaded successfully",
         part: updatedPart,
         modelPath: publicUrl
@@ -953,13 +1053,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'spare_part', part.id, req.user.username || 'unknown', { model3dPath }
         ));
       }
-      
+
       res.json(part);
     } catch (error) {
       console.error("Error updating part model:", error);
@@ -979,14 +1079,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
-          'updated', 'spare_part', part.id, req.user.username || 'unknown', 
+          'updated', 'spare_part', part.id, req.user.username || 'unknown',
           { locationInstructions, requiredTools, installTimeEstimates }
         ));
       }
-      
+
       res.json(part);
     } catch (error) {
       console.error("Error updating maintenance info:", error);
@@ -1027,13 +1127,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertMechanicSchema.parse(req.body);
       const mechanic = await storage.createMechanic(validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'maintenance', mechanic.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(mechanic);
     } catch (error) {
       console.error("Error creating mechanic:", error);
@@ -1047,13 +1147,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!mechanic) {
         return res.status(404).json({ error: "Mechanic not found" });
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'maintenance', mechanic.id, req.user.username || 'unknown', req.body
         ));
       }
-      
+
       res.json(mechanic);
     } catch (error) {
       console.error("Error updating mechanic:", error);
@@ -1088,7 +1188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/maintenance", isCEOOrAdmin, async (req, res) => {
     try {
       const { partsUsed, ...recordData } = req.body;
-      
+
       // Validate maintenance record data
       const validatedRecord = insertMaintenanceRecordSchema.parse(recordData);
       const record = await storage.createMaintenanceRecord(validatedRecord);
@@ -1121,13 +1221,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!record) {
         return res.status(404).json({ error: "Maintenance record not found" });
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'maintenance', record.id, req.user.username || 'unknown', req.body
         ));
       }
-      
+
       res.json(record);
     } catch (error) {
       console.error("Error updating maintenance record:", error);
@@ -1149,20 +1249,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/maintenance/:maintenanceId/parts", isCEOOrAdmin, async (req, res) => {
     try {
       const parts = req.body.parts || [];
-      const validatedParts = parts.map((part: any) => 
+      const validatedParts = parts.map((part: any) =>
         insertPartsUsageHistorySchema.parse({
           ...part,
           maintenanceRecordId: req.params.maintenanceId,
         })
       );
       await storage.addPartsToMaintenance(req.params.maintenanceId, validatedParts);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'parts_usage', req.params.maintenanceId, req.user.username || 'unknown', { parts }
         ));
       }
-      
+
       res.status(201).json({ message: "Parts added successfully" });
     } catch (error) {
       console.error("Error adding parts to maintenance:", error);
@@ -1185,13 +1285,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertOperatingBehaviorReportSchema.parse(req.body);
       const report = await storage.createOperatingReport(validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'operating_report', report.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(report);
     } catch (error) {
       console.error("Error creating operating report:", error);
@@ -1231,13 +1331,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertGarageSchema.parse(req.body);
       const garage = await storage.createGarage(validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'garage', garage.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(garage);
     } catch (error) {
       console.error("Error creating garage:", error);
@@ -1249,13 +1349,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertGarageSchema.parse(req.body);
       const garage = await storage.updateGarage(req.params.id, validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'garage', garage.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.json(garage);
     } catch (error) {
       console.error("Error updating garage:", error);
@@ -1266,17 +1366,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/garages/:id", isCEOOrAdmin, async (req, res) => {
     try {
       await storage.deleteGarage(req.params.id);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted', 'garage', req.params.id, req.user.username || 'unknown', {}
         ));
       }
-      
+
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting garage:", error);
-      
+
       // Handle specific error messages
       if (error instanceof Error) {
         if (error.message === "Garage not found") {
@@ -1286,7 +1386,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(400).json({ error: error.message });
         }
       }
-      
+
       res.status(500).json({ error: "Failed to delete garage" });
     }
   });
@@ -1309,7 +1409,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const validatedData = insertWorkshopSchema.parse(workshopData);
       const workshop = await storage.createWorkshop(validatedData);
       console.log("[Workshop Create] Created workshop ID:", workshop.id);
-      
+
       // Add members if provided
       if (memberIds && Array.isArray(memberIds)) {
         console.log("[Workshop Create] Adding", memberIds.length, "members to workshop", workshop.id);
@@ -1321,7 +1421,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
       }
-      
+
       res.status(201).json(workshop);
     } catch (error) {
       console.error("Error creating workshop:", error);
@@ -1334,20 +1434,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { memberIds, ...workshopData } = req.body;
       const validatedData = insertWorkshopSchema.parse(workshopData);
       const workshop = await storage.updateWorkshop(req.params.id, validatedData);
-      
+
       // Update members if provided
       if (memberIds && Array.isArray(memberIds)) {
         // Get existing members
         const existingMembers = await storage.getWorkshopMembers(req.params.id);
         const existingMemberIds = existingMembers.map(m => m.id);
-        
+
         // Remove members that are not in the new list
         for (const existingId of existingMemberIds) {
           if (!memberIds.includes(existingId)) {
             await storage.removeWorkshopMember(req.params.id, existingId);
           }
         }
-        
+
         // Add new members
         for (const employeeId of memberIds) {
           if (!existingMemberIds.includes(employeeId)) {
@@ -1358,7 +1458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
       res.json(workshop);
     } catch (error) {
       console.error("Error updating workshop:", error);
@@ -1418,10 +1518,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!workshop) {
         return res.status(404).json({ error: "Workshop not found" });
       }
-      
+
       // Get workshop members
       const membersList = await storage.getWorkshopMembers(req.params.id);
-      
+
       res.json({
         ...workshop,
         membersList,
@@ -1504,13 +1604,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Bulk insert using transaction
-      const importResults = await db.transaction(async (tx) => {
+      const importResults = await db.transaction(async (tx: typeof db) => {
         let created = 0;
         let updated = 0;
         let skipped = 0;
         const errors: any[] = [];
 
-        for (const employee of result.data) {
+        const employeesData = result.data!;
+
+        for (const employee of employeesData) {
           try {
             // Check if employee already exists
             const existing = await tx.query.employees.findFirst({
@@ -1537,14 +1639,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
+
         return { created, updated, skipped, errors };
       });
 
       res.json({
         success: true,
-        message: "Import completed",
-        results: importResults,
-        summary: result.summary,
+        results: importResults
       });
     } catch (error) {
       console.error("Error importing employees:", error);
@@ -1552,12 +1653,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Employees
   app.get("/api/employees", async (req, res) => {
     try {
       const { role, garageId } = req.query;
       const employees = await storage.getAllEmployees(
-        role as string | undefined, 
+        role as string | undefined,
         garageId as string | undefined
       );
       res.json(employees);
@@ -1598,20 +1698,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/employees", isCEOOrAdmin, async (req, res) => {
     try {
       const validatedData = insertEmployeeSchema.parse(req.body);
-      
+
       // Hash password if provided
       if (validatedData.password) {
         validatedData.password = await bcrypt.hash(validatedData.password, 10);
       }
-      
+
       const employee = await storage.createEmployee(validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'employee', employee.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(employee);
     } catch (error) {
       console.error("Error creating employee:", error);
@@ -1622,20 +1722,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/employees/:id", isCEOOrAdmin, async (req, res) => {
     try {
       const validatedData = insertEmployeeSchema.parse(req.body);
-      
+
       // Hash password if provided (update scenario)
       if (validatedData.password) {
         validatedData.password = await bcrypt.hash(validatedData.password, 10);
       }
-      
+
       const employee = await storage.updateEmployee(req.params.id, validatedData);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'updated', 'employee', employee.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.json(employee);
     } catch (error) {
       console.error("Error updating employee:", error);
@@ -1646,13 +1746,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/employees/:id", isCEOOrAdmin, async (req, res) => {
     try {
       await storage.deleteEmployee(req.params.id);
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted', 'employee', req.params.id, req.user.username || 'unknown', {}
         ));
       }
-      
+
       res.status(204).send();
     } catch (error) {
       console.error("Error deleting employee:", error);
@@ -1666,7 +1766,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all employees with deviceUserId (imported from biometric device)
       const allEmployees = await storage.getAllEmployees();
       const biometricEmployees = allEmployees.filter((emp: any) => emp.deviceUserId !== null && emp.deviceUserId !== undefined);
-      
+
       let deletedCount = 0;
       const errors: string[] = [];
 
@@ -1682,7 +1782,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
-          'deleted', 'employee', 'bulk', req.user.username || 'unknown', 
+          'deleted', 'employee', 'bulk', req.user.username || 'unknown',
           { deletedCount, totalFound: biometricEmployees.length }
         ));
       }
@@ -1696,10 +1796,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Error deleting biometric employees:", error);
-      res.status(500).json({ 
+      res.status(500).json({
         success: false,
         error: "Failed to delete biometric employees",
-        message: error.message 
+        message: error.message
       });
     }
   });
@@ -1711,22 +1811,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const objectStorageService = new ObjectStorageService();
         const uploadURL = await objectStorageService.getPublicObjectUploadURL();
-        
+
         // Extract the object path from the upload URL (before query parameters)
         const url = new URL(uploadURL);
         const objectPath = objectStorageService.normalizePublicObjectPath(url.origin + url.pathname);
-        
+
         return res.json({ uploadURL, objectPath });
       } catch (storageError: any) {
         // Fall back to local upload for development environments
         console.log("Object storage not available, using local file upload:", storageError.message);
-        
+
         // Generate unique filename
         const fileId = nanoid();
         const uploadPath = `/uploads/employees/${fileId}`;
-        
+
         // Return a local upload URL (handled by a different endpoint)
-        return res.json({ 
+        return res.json({
           uploadURL: `/api/employees/${req.params.id}/photo/local-upload`,
           objectPath: uploadPath,
           useLocalUpload: true,
@@ -1761,7 +1861,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update employee with photo path
       const photoPath = `/uploads/employees/${filename}`;
       const employee = await storage.updateEmployeePhoto(req.params.id, photoPath);
-      
+
       if (!employee) {
         return res.status(404).json({ error: "Employee not found" });
       }
@@ -1818,19 +1918,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const currentYear = new Date().getFullYear();
       const prefix = `WO-${currentYear}-`;
-      
+
       const existingOrders = await storage.getWorkOrdersByPrefix(prefix);
       const existingNumbers = new Set(existingOrders.map(o => o.workOrderNumber));
-      
+
       let nextNumber = 1;
       let generatedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-      
+
       // Find next available number (handle gaps from deleted orders)
       while (existingNumbers.has(generatedNumber)) {
         nextNumber++;
         generatedNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
       }
-      
+
       res.json({ workOrderNumber: generatedNumber });
     } catch (error) {
       console.error("Error generating work order number:", error);
@@ -1844,7 +1944,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all foreman data
       const isAdmin = hasRole(req.user, 'admin');
       const pendingWorkOrders = await storage.getForemanPendingWorkOrders(req.user.id, isAdmin);
@@ -1861,7 +1961,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all foreman data
       const isAdmin = hasRole(req.user, 'admin');
       const activeWorkOrders = await storage.getForemanActiveWorkOrders(req.user.id, isAdmin);
@@ -1878,7 +1978,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all foreman data
       const isAdmin = hasRole(req.user, 'admin');
       const approvedCompletions = await storage.getForemanApprovedCompletions(req.user.id, isAdmin);
@@ -1896,12 +1996,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for verifier, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'verifier', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
       }
-      
+
       const pendingWorkOrders = await storage.getVerifierPendingWorkOrders();
       res.json(pendingWorkOrders);
     } catch (error) {
@@ -1915,12 +2015,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for verifier, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'verifier', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
       }
-      
+
       const verifiedWorkOrders = await storage.getVerifierVerifiedWorkOrders();
       res.json(verifiedWorkOrders);
     } catch (error) {
@@ -1934,12 +2034,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for verifier, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'verifier', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
       }
-      
+
       const rejectedWorkOrders = await storage.getVerifierRejectedWorkOrders();
       res.json(rejectedWorkOrders);
     } catch (error) {
@@ -1954,12 +2054,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for supervisor, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'supervisor', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Supervisor or CEO role required (admin has full access)" });
       }
-      
+
       const pendingWorkOrders = await storage.getSupervisorPendingWorkOrders();
       res.json(pendingWorkOrders);
     } catch (error) {
@@ -1974,7 +2074,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all team member work orders
       const isAdmin = hasRole(req.user, 'admin');
       const workOrders = await storage.getWorkOrdersByTeamMember(req.user.id, isAdmin);
@@ -2004,17 +2104,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { workOrderMemberships, employees, itemRequisitions, itemRequisitionLines, spareParts, partsReceipts } = await import("@shared/schema");
       const workOrderId = req.params.id;
-      
+
       // Get basic work order info with time tracking
       const workOrder = await storage.getWorkOrderById(workOrderId);
       if (!workOrder) {
         return res.status(404).json({ error: "Work order not found" });
       }
-      
+
       // Enrich with time tracking
       const enriched = await enrichWorkOrdersWithTimeTracking([workOrder]);
       const enrichedWorkOrder = enriched[0];
-      
+
       // Get memberships with employee details
       const memberships = await db
         .select({
@@ -2035,7 +2135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             eq(workOrderMemberships.isActive, true)
           )
         );
-      
+
       // Get item requisitions with lines and spare part details
       const requisitions = await db
         .select({
@@ -2045,10 +2145,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
         .from(itemRequisitions)
         .where(eq(itemRequisitions.workOrderId, workOrderId));
-      
+
       // For each requisition, get its lines with spare part details
       const requisitionsWithLines = await Promise.all(
-        requisitions.map(async (req) => {
+        requisitions.map(async (req: typeof requisitions[number]) => {
           const lines = await db
             .select({
               id: itemRequisitionLines.id,
@@ -2066,17 +2166,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from(itemRequisitionLines)
             .leftJoin(spareParts, eq(itemRequisitionLines.sparePartId, spareParts.id))
             .where(eq(itemRequisitionLines.requisitionId, req.id));
-          
+
           return {
             ...req,
-            lines: lines.map(line => ({
+            lines: lines.map((line: typeof lines[number]) => ({
               ...line,
               sparePart: line.sparePart.id ? line.sparePart : undefined
             }))
           };
         })
       );
-      
+
       // Get parts receipts for this work order with spare part details
       const receiptsData = await db
         .select({
@@ -2089,7 +2189,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: spareParts.id,
             partName: spareParts.partName,
             partNumber: spareParts.partNumber,
-            unitOfMeasure: spareParts.unitOfMeasure,
           },
           issuedBy: {
             id: employees.id,
@@ -2100,7 +2199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .leftJoin(spareParts, eq(partsReceipts.sparePartId, spareParts.id))
         .leftJoin(employees, eq(partsReceipts.issuedById, employees.id))
         .where(eq(partsReceipts.workOrderId, workOrderId));
-      
+
       const receipts = receiptsData.map((r: any) => ({
         id: r.id,
         workOrderId: r.workOrderId,
@@ -2110,7 +2209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sparePart: r.sparePart.id ? r.sparePart : null,
         issuedBy: r.issuedBy.id ? r.issuedBy : null,
       }));
-      
+
       res.json({
         id: enrichedWorkOrder.id,
         workOrderNumber: enrichedWorkOrder.workOrderNumber,
@@ -2132,12 +2231,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Work Order Cost Tracking Routes
-  
+
   // Get all cost entries for a work order
   app.get("/api/work-orders/:id/costs", isAuthenticated, async (req, res) => {
     try {
       const workOrderId = req.params.id;
-      
+
       const [laborEntries, lubricantEntries, outsourceEntries, workOrder] = await Promise.all([
         storage.getWorkOrderLaborEntries(workOrderId),
         storage.getWorkOrderLubricantEntries(workOrderId),
@@ -2198,8 +2297,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Recalculate totalCost server-side to avoid trusting client calculation
-      const hoursWorked = typeof validated.hoursWorked === 'number' 
-        ? validated.hoursWorked 
+      const hoursWorked = typeof validated.hoursWorked === 'number'
+        ? validated.hoursWorked
         : parseFloat(validated.hoursWorked as any);
       const hourlyRate = typeof validated.hourlyRateSnapshot === 'number'
         ? validated.hourlyRateSnapshot
@@ -2207,17 +2306,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const overtimeFactor = typeof validated.overtimeFactor === 'number'
         ? validated.overtimeFactor
         : parseFloat(validated.overtimeFactor as any);
-      
+
       // Validate hoursWorked is positive (prevents 0-hour entries)
       if (hoursWorked <= 0) {
         return res.status(400).json({ error: "Hours worked must be greater than 0" });
       }
-      
+
       const recalculatedTotalCost = hoursWorked * hourlyRate * overtimeFactor;
 
       const entry = await storage.addLaborEntry({
         ...validated,
-        totalCost: recalculatedTotalCost.toFixed(2),
+        totalCost: Number(recalculatedTotalCost.toFixed(2)),
       });
       res.json(entry);
     } catch (error: any) {
@@ -2285,10 +2384,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Check if user is supervisor/CEO/admin OR assigned to this work order
       const isSupervisorOrAdmin = hasRole(req.user, 'supervisor', 'admin', 'ceo');
-      
+
       if (!isSupervisorOrAdmin) {
         // Check if user is assigned to this work order as a team member or foreman
-        const assignment = await storage.getWorkOrderTeamMember(req.params.id, req.user.id);
+        const { workOrderMemberships } = await import("@shared/schema");
+        const assignment = await db.query.workOrderMemberships.findFirst({
+          where: and(
+            eq(workOrderMemberships.workOrderId, req.params.id),
+            eq(workOrderMemberships.employeeId, req.user.id),
+            eq(workOrderMemberships.isActive, true)
+          ),
+        });
         if (!assignment || !assignment.isActive) {
           return res.status(403).json({ error: "You must be assigned to this work order to add lubricant entries" });
         }
@@ -2381,18 +2487,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/work-orders/:id/assignments", async (req, res) => {
     try {
       const workOrderId = req.params.id;
-      
+
       // Fetch garage and workshop assignments
       const garageAssignments = await db
         .select({ garageId: workOrderGarages.garageId })
         .from(workOrderGarages)
         .where(eq(workOrderGarages.workOrderId, workOrderId));
-      
+
       const workshopAssignments = await db
         .select({ workshopId: workOrderWorkshops.workshopId })
         .from(workOrderWorkshops)
         .where(eq(workOrderWorkshops.workOrderId, workOrderId));
-      
+
       res.json({
         garageIds: garageAssignments.map((a: { garageId: string }) => a.garageId),
         workshopIds: workshopAssignments.map((a: { workshopId: string }) => a.workshopId),
@@ -2408,13 +2514,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       const { teamMemberIds } = req.body;
-      
+
       if (!teamMemberIds || !Array.isArray(teamMemberIds) || teamMemberIds.length === 0) {
         return res.status(400).json({ error: "Team member IDs are required" });
       }
-      
+
       await storage.assignTeamToWorkOrder(req.params.id, teamMemberIds, req.user.id);
       res.json({ success: true, message: "Team assigned successfully" });
     } catch (error) {
@@ -2428,19 +2534,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for verifier, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'verifier', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
       }
-      
+
       const { notes } = req.body;
       await storage.approveWorkOrderVerification(req.params.id, req.user.id, notes);
       res.json({ success: true, message: "Work order verification approved" });
     } catch (error: any) {
       console.error("Error approving work order verification:", error);
-      const statusCode = error.message.includes("not found") ? 404 : 
-                         error.message.includes("not pending") ? 400 : 500;
+      const statusCode = error.message.includes("not found") ? 404 :
+        error.message.includes("not pending") ? 400 : 500;
       res.status(statusCode).json({ error: error.message || "Failed to approve verification" });
     }
   });
@@ -2450,24 +2556,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for verifier, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'verifier', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
       }
-      
+
       const { rejectionNotes } = req.body;
-      
+
       if (!rejectionNotes) {
         return res.status(400).json({ error: "Rejection notes are required" });
       }
-      
+
       await storage.rejectWorkOrderVerification(req.params.id, req.user.id, rejectionNotes);
       res.json({ success: true, message: "Work order verification rejected" });
     } catch (error: any) {
       console.error("Error rejecting work order verification:", error);
-      const statusCode = error.message.includes("not found") ? 404 : 
-                         error.message.includes("not pending") ? 400 : 500;
+      const statusCode = error.message.includes("not found") ? 404 :
+        error.message.includes("not pending") ? 400 : 500;
       res.status(statusCode).json({ error: error.message || "Failed to reject verification" });
     }
   });
@@ -2477,19 +2583,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for supervisor, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'supervisor', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Supervisor or CEO role required (admin has full access)" });
       }
-      
+
       const { notes } = req.body;
       await storage.approveSupervisorSignoff(req.params.id, req.user.id, notes);
       res.json({ success: true, message: "Work order approved and completed" });
     } catch (error: any) {
       console.error("Error approving work order:", error);
-      const statusCode = error.message.includes("not found") ? 404 : 
-                         error.message.includes("not pending") ? 400 : 500;
+      const statusCode = error.message.includes("not found") ? 404 :
+        error.message.includes("not pending") ? 400 : 500;
       res.status(statusCode).json({ error: error.message || "Failed to approve work order" });
     }
   });
@@ -2499,24 +2605,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check for supervisor, ceo roles (admin has automatic full access)
       if (!hasRole(req.user, 'supervisor', 'ceo')) {
         return res.status(403).json({ error: "Access denied: Supervisor or CEO role required (admin has full access)" });
       }
-      
+
       const { rejectionNotes } = req.body;
-      
+
       if (!rejectionNotes) {
         return res.status(400).json({ error: "Rejection notes are required" });
       }
-      
+
       await storage.rejectSupervisorSignoff(req.params.id, req.user.id, rejectionNotes);
       res.json({ success: true, message: "Work order rejected and sent back for verification" });
     } catch (error: any) {
       console.error("Error rejecting work order:", error);
-      const statusCode = error.message.includes("not found") ? 404 : 
-                         error.message.includes("not pending") ? 400 : 500;
+      const statusCode = error.message.includes("not found") ? 404 :
+        error.message.includes("not pending") ? 400 : 500;
       res.status(statusCode).json({ error: error.message || "Failed to reject work order" });
     }
   });
@@ -2526,14 +2632,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       await storage.markWorkOrderAsCompleted(req.params.id, req.user.id);
       res.json({ success: true, message: "Work order marked as completed" });
     } catch (error: any) {
       console.error("Error marking work order as completed:", error);
-      const statusCode = error.message.includes("not found") ? 404 : 
-                         error.message.includes("must be verified") ? 400 :
-                         error.message.includes("Only the work order creator") ? 403 : 500;
+      const statusCode = error.message.includes("not found") ? 404 :
+        error.message.includes("must be verified") ? 400 :
+          error.message.includes("Only the work order creator") ? 403 : 500;
       res.status(statusCode).json({ error: error.message || "Failed to mark work order as completed" });
     }
   });
@@ -2544,18 +2650,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       const { lines, ...requisitionData } = req.body;
-      
+
       if (!lines || !Array.isArray(lines) || lines.length === 0) {
         return res.status(400).json({ error: "At least one line item is required" });
       }
-      
+
       const requisition = await storage.createItemRequisition({
         ...requisitionData,
         requesterId: req.user.id,
       }, lines);
-      
+
       res.status(201).json(requisition);
     } catch (error) {
       console.error("Error creating item requisition:", error);
@@ -2568,10 +2674,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all requisitions, team members see only their own
       const isAdmin = hasRole(req.user, 'admin');
-      
+
       // Build query - all for admin, only requester's for team members
       let query = db
         .select({
@@ -2586,12 +2692,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           createdAt: itemRequisitions.createdAt,
         })
         .from(itemRequisitions);
-      
+
       // Apply filter only for non-admin users
       if (!isAdmin) {
         query = query.where(eq(itemRequisitions.requesterId, req.user.id));
       }
-      
+
       const requisitions = await query.orderBy(desc(itemRequisitions.createdAt));
 
       // Fetch work order numbers and lines for each requisition
@@ -2601,9 +2707,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from(workOrders)
             .where(eq(workOrders.id, requisition.workOrderId))
             .limit(1);
-          
+
           const lines = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.requisitionId, requisition.id));
-          
+
           return {
             ...requisition,
             workOrderNumber: workOrder[0]?.workOrderNumber || "",
@@ -2624,10 +2730,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Admin can see all foreman requisitions
       const isAdmin = hasRole(req.user, 'admin');
-      
+
       if (!isAdmin) {
         // Check if user has foreman role by verifying they are assigned as foreman to at least one workshop
         const foremanWorkshops = await db.select().from(workshops).where(eq(workshops.foremanId, req.user.id));
@@ -2635,7 +2741,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ error: "Access denied: Not authorized as foreman" });
         }
       }
-      
+
       const requisitions = await storage.getItemRequisitionsByForeman(req.user.id, isAdmin);
       res.json(requisitions);
     } catch (error) {
@@ -2649,12 +2755,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can access (admin has automatic access via hasRole)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const requisitions = await storage.getItemRequisitionsByStoreManager();
       res.json(requisitions);
     } catch (error) {
@@ -2668,13 +2774,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check if user is a foreman of at least one workshop
       const foremanWorkshops = await db.select().from(workshops).where(eq(workshops.foremanId, req.user.id));
       if (foremanWorkshops.length === 0) {
         return res.status(403).json({ error: "Access denied: Not authorized as foreman" });
       }
-      
+
       const { remarks } = req.body;
       await storage.approveItemRequisitionByForeman(req.params.id, req.user.id, remarks);
       res.json({ success: true, message: "Requisition approved" });
@@ -2689,13 +2795,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check if user is a foreman of at least one workshop
       const foremanWorkshops = await db.select().from(workshops).where(eq(workshops.foremanId, req.user.id));
       if (foremanWorkshops.length === 0) {
         return res.status(403).json({ error: "Access denied: Not authorized as foreman" });
       }
-      
+
       const { remarks } = req.body;
       await storage.rejectItemRequisitionByForeman(req.params.id, req.user.id, remarks);
       res.json({ success: true, message: "Requisition rejected" });
@@ -2711,12 +2817,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Fetch all requisitions for this work order
       const requisitions = await db.select()
         .from(itemRequisitions)
         .where(eq(itemRequisitions.workOrderId, req.params.id));
-      
+
       // Fetch lines and receipts for each requisition
       const requisitionsWithDetails = await Promise.all(
         requisitions.map(async (requisition: any) => {
@@ -2729,7 +2835,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .leftJoin(spareParts, eq(itemRequisitionLines.sparePartId, spareParts.id))
             .leftJoin(employees, eq(itemRequisitionLines.foremanReviewerId, employees.id))
             .where(eq(itemRequisitionLines.requisitionId, requisition.id));
-          
+
           // Fetch parts receipts for each line
           const linesWithReceipts = await Promise.all(
             lines.map(async (lineItem: any) => {
@@ -2740,7 +2846,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 .from(partsReceipts)
                 .leftJoin(employees, eq(partsReceipts.issuedById, employees.id))
                 .where(eq(partsReceipts.requisitionLineId, lineItem.line.id));
-              
+
               return {
                 ...lineItem.line,
                 sparePart: lineItem.sparePart,
@@ -2749,14 +2855,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               };
             })
           );
-          
+
           return {
             ...requisition,
             lines: linesWithReceipts,
           };
         })
       );
-      
+
       res.json(requisitionsWithDetails);
     } catch (error) {
       console.error("Error fetching work order requisitions:", error);
@@ -2770,14 +2876,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       const receipts = await db.select({
         receipt: partsReceipts,
         sparePart: spareParts,
       })
         .from(partsReceipts)
         .leftJoin(spareParts, eq(partsReceipts.sparePartId, spareParts.id));
-      
+
       res.json(receipts.map((r: any) => ({
         ...r.receipt,
         sparePart: r.sparePart ? {
@@ -2797,7 +2903,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check if user is a foreman (admin has automatic access)
       if (!hasRole(req.user, 'admin')) {
         const foremanWorkshops = await db.select().from(workshops).where(eq(workshops.foremanId, req.user.id));
@@ -2805,15 +2911,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ error: "Access denied: Not authorized as foreman" });
         }
       }
-      
+
       const { approvedQty, remarks } = req.body;
-      
+
       // Get the line to find its requisition
       const [line] = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.id, req.params.lineId));
       if (!line) {
         return res.status(404).json({ error: "Line item not found" });
       }
-      
+
       // Update the line item with foreman approval
       await db.update(itemRequisitionLines)
         .set({
@@ -2824,12 +2930,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           foremanStatus: 'approved',
         })
         .where(eq(itemRequisitionLines.id, req.params.lineId));
-      
+
       // Check if all lines in the requisition have been processed
       const allLines = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.requisitionId, line.requisitionId));
-      const allProcessed = allLines.every(l => l.foremanStatus === 'approved' || l.foremanStatus === 'rejected' || l.id === req.params.lineId);
-      const hasApprovedLines = allLines.some(l => l.foremanStatus === 'approved' || l.id === req.params.lineId);
-      
+      const allProcessed = allLines.every(
+        (lineItem: typeof allLines[number]) =>
+          lineItem.foremanStatus === 'approved' ||
+          lineItem.foremanStatus === 'rejected' ||
+          lineItem.id === req.params.lineId
+      );
+      const hasApprovedLines = allLines.some(
+        (lineItem: typeof allLines[number]) =>
+          lineItem.foremanStatus === 'approved' || lineItem.id === req.params.lineId
+      );
+
       // If all lines processed and at least one approved, update requisition status to pending_store
       if (allProcessed && hasApprovedLines) {
         await db.update(itemRequisitions)
@@ -2841,7 +2955,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(itemRequisitions.id, line.requisitionId));
       }
-      
+
       res.json({ success: true, message: "Line item approved by foreman" });
     } catch (error) {
       console.error("Error approving line item:", error);
@@ -2855,7 +2969,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Check if user is a foreman (admin has automatic access)
       if (!hasRole(req.user, 'admin')) {
         const foremanWorkshops = await db.select().from(workshops).where(eq(workshops.foremanId, req.user.id));
@@ -2863,19 +2977,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(403).json({ error: "Access denied: Not authorized as foreman" });
         }
       }
-      
+
       const { remarks } = req.body;
-      
+
       if (!remarks) {
         return res.status(400).json({ error: "Rejection remarks are required" });
       }
-      
+
       // Get the line to find its requisition
       const [line] = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.id, req.params.lineId));
       if (!line) {
         return res.status(404).json({ error: "Line item not found" });
       }
-      
+
       // Update the line item with foreman rejection
       await db.update(itemRequisitionLines)
         .set({
@@ -2885,12 +2999,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           foremanStatus: 'rejected',
         })
         .where(eq(itemRequisitionLines.id, req.params.lineId));
-      
+
       // Check if all lines in the requisition have been processed
       const allLines = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.requisitionId, line.requisitionId));
-      const allProcessed = allLines.every(l => l.foremanStatus === 'approved' || l.foremanStatus === 'rejected' || l.id === req.params.lineId);
-      const hasApprovedLines = allLines.some(l => l.foremanStatus === 'approved');
-      
+      const allProcessed = allLines.every(
+        (lineItem: typeof allLines[number]) =>
+          lineItem.foremanStatus === 'approved' ||
+          lineItem.foremanStatus === 'rejected' ||
+          lineItem.id === req.params.lineId
+      );
+      const hasApprovedLines = allLines.some(
+        (lineItem: typeof allLines[number]) => lineItem.foremanStatus === 'approved'
+      );
+
       // If all lines processed and at least one approved, update requisition status to pending_store
       if (allProcessed && hasApprovedLines) {
         await db.update(itemRequisitions)
@@ -2912,7 +3033,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           })
           .where(eq(itemRequisitions.id, line.requisitionId));
       }
-      
+
       res.json({ success: true, message: "Line item rejected by foreman" });
     } catch (error) {
       console.error("Error rejecting line item:", error);
@@ -2925,12 +3046,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can approve (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const { remarks } = req.body;
       await storage.approveItemRequisitionByStoreManager(req.params.id, req.user.id, remarks);
       res.json({ success: true, message: "Requisition approved by store manager" });
@@ -2945,12 +3066,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can reject (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const { remarks } = req.body;
       await storage.rejectItemRequisitionByStoreManager(req.params.id, req.user.id, remarks);
       res.json({ success: true, message: "Requisition rejected by store manager" });
@@ -2965,25 +3086,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can process line items (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const { lineDecisions, generalRemarks } = req.body;
-      
+
       if (!Array.isArray(lineDecisions) || lineDecisions.length === 0) {
         return res.status(400).json({ error: "Invalid line decisions" });
       }
-      
+
       await storage.processItemRequisitionLineDecisions(
         req.params.id,
         req.user.id,
         lineDecisions,
         generalRemarks
       );
-      
+
       res.json({ success: true, message: "Line items processed successfully" });
     } catch (error) {
       console.error("Error processing line items:", error);
@@ -2997,12 +3118,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can view purchase requests (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const purchaseRequests = await storage.getPurchaseRequests();
       res.json(purchaseRequests);
     } catch (error) {
@@ -3016,12 +3137,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can view purchase requests (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       const purchaseRequest = await storage.getPurchaseRequestById(req.params.id);
       res.json(purchaseRequest);
     } catch (error) {
@@ -3036,12 +3157,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       // Only store_manager role can update purchase requests (admin has automatic access)
       if (!hasRole(req.user, 'store_manager')) {
         return res.status(403).json({ error: "Access denied: Store manager role required (admin has full access)" });
       }
-      
+
       await storage.updatePurchaseRequest(req.params.id, req.body);
       res.json({ success: true, message: "Purchase request updated successfully" });
     } catch (error) {
@@ -3056,13 +3177,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       await storage.confirmPartsReceipt(req.params.id, req.user.id);
       res.json({ success: true, message: "Parts receipt confirmed" });
     } catch (error) {
       console.error("Error confirming parts receipt:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to confirm parts receipt";
-      
+
       // Return appropriate status codes based on error type
       if (errorMessage.includes("Access denied") || errorMessage.includes("only confirm receipt for your own")) {
         return res.status(403).json({ error: errorMessage });
@@ -3070,7 +3191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (errorMessage.includes("Only approved") || errorMessage.includes("not found")) {
         return res.status(400).json({ error: errorMessage });
       }
-      
+
       res.status(500).json({ error: errorMessage });
     }
   });
@@ -3080,20 +3201,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       await storage.markWorkComplete(req.params.id, req.user.id);
       res.json({ success: true, message: "Work marked as complete" });
     } catch (error) {
       console.error("Error marking work complete:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to mark work complete";
-      
+
       if (errorMessage.includes("Access denied") || errorMessage.includes("not assigned")) {
         return res.status(403).json({ error: errorMessage });
       }
       if (errorMessage.includes("Only work orders") || errorMessage.includes("not found")) {
         return res.status(400).json({ error: errorMessage });
       }
-      
+
       res.status(500).json({ error: errorMessage });
     }
   });
@@ -3103,21 +3224,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.user) {
         return res.status(401).json({ error: "Not authenticated" });
       }
-      
+
       const { notes } = req.body;
       await storage.approveWorkCompletion(req.params.id, req.user.id, notes);
       res.json({ success: true, message: "Work completion approved" });
     } catch (error) {
       console.error("Error approving work completion:", error);
       const errorMessage = error instanceof Error ? error.message : "Failed to approve work completion";
-      
+
       if (errorMessage.includes("Access denied") || errorMessage.includes("not the foreman")) {
         return res.status(403).json({ error: errorMessage });
       }
       if (errorMessage.includes("not pending") || errorMessage.includes("not found")) {
         return res.status(400).json({ error: errorMessage });
       }
-      
+
       res.status(500).json({ error: errorMessage });
     }
   });
@@ -3126,23 +3247,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Extract requiredParts, garageIds, and workshopIds from body
       const { requiredParts, garageIds, workshopIds, ...workOrderData } = req.body;
-      
+
       // Remove empty work order number to allow auto-generation
       if (!workOrderData.workOrderNumber || workOrderData.workOrderNumber.trim() === '') {
         delete workOrderData.workOrderNumber;
       }
-      
+
       const validatedData = insertWorkOrderSchema.parse({
         ...workOrderData,
         createdById: req.user?.id,
       });
       const workOrder = await storage.createWorkOrder(validatedData);
-      
+
       // Update reception status to "work_order_created" if work order has a receptionId
       if (workOrder.receptionId) {
         await storage.updateReception(workOrder.receptionId, { status: "work_order_created" });
       }
-      
+
       // Save garage assignments
       if (garageIds && Array.isArray(garageIds) && garageIds.length > 0) {
         const garageAssignments = garageIds.map((garageId: string) => ({
@@ -3151,7 +3272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         await db.insert(workOrderGarages).values(garageAssignments);
       }
-      
+
       // Save workshop assignments
       if (workshopIds && Array.isArray(workshopIds) && workshopIds.length > 0) {
         const workshopAssignments = workshopIds.map((workshopId: string) => ({
@@ -3160,7 +3281,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         await db.insert(workOrderWorkshops).values(workshopAssignments);
       }
-      
+
       // Save required parts if provided
       if (requiredParts && Array.isArray(requiredParts) && requiredParts.length > 0) {
         const partsToInsert = requiredParts.map((part: any) => ({
@@ -3173,13 +3294,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         await storage.replaceWorkOrderRequiredParts(workOrder.id, partsToInsert);
       }
-      
+
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created', 'work_order', workOrder.id, req.user.username || 'unknown', validatedData
         ));
       }
-      
+
       res.status(201).json(workOrder);
     } catch (error) {
       console.error("Error creating work order:", error);
@@ -3191,15 +3312,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       // Extract requiredParts, garageIds, and workshopIds from body
       const { requiredParts, garageIds, workshopIds, ...workOrderData } = req.body;
-      
+
       const validatedData = insertWorkOrderSchema.parse(workOrderData);
       const workOrder = await storage.updateWorkOrder(req.params.id, validatedData);
-      
+
       // Update garage assignments if provided
       if (garageIds !== undefined && Array.isArray(garageIds)) {
         // Delete existing garage assignments
         await db.delete(workOrderGarages).where(eq(workOrderGarages.workOrderId, req.params.id));
-        
+
         // Insert new garage assignments
         if (garageIds.length > 0) {
           const garageAssignments = garageIds.map((garageId: string) => ({
@@ -3209,12 +3330,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await db.insert(workOrderGarages).values(garageAssignments);
         }
       }
-      
+
       // Update workshop assignments if provided
       if (workshopIds !== undefined && Array.isArray(workshopIds)) {
         // Delete existing workshop assignments
         await db.delete(workOrderWorkshops).where(eq(workOrderWorkshops.workOrderId, req.params.id));
-        
+
         // Insert new workshop assignments
         if (workshopIds.length > 0) {
           const workshopAssignments = workshopIds.map((workshopId: string) => ({
@@ -3224,7 +3345,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await db.insert(workOrderWorkshops).values(workshopAssignments);
         }
       }
-      
+
       // Update required parts if provided
       if (requiredParts && Array.isArray(requiredParts)) {
         const partsToInsert = requiredParts.map((part: any) => ({
@@ -3237,7 +3358,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }));
         await storage.replaceWorkOrderRequiredParts(req.params.id, partsToInsert);
       }
-      
+
       res.json(workOrder);
     } catch (error) {
       console.error("Error updating work order:", error);
@@ -3253,10 +3374,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Extract requiredParts, garageIds, and workshopIds from body
       const { requiredParts, garageIds, workshopIds, ...workOrderData } = req.body;
-      
+
       // Use updateWorkOrder which handles partial updates
       const workOrder = await storage.updateWorkOrder(req.params.id, workOrderData);
-      
+
       // Update garage assignments if provided
       if (garageIds !== undefined && Array.isArray(garageIds)) {
         await db.delete(workOrderGarages).where(eq(workOrderGarages.workOrderId, req.params.id));
@@ -3268,7 +3389,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await db.insert(workOrderGarages).values(garageAssignments);
         }
       }
-      
+
       // Update workshop assignments if provided
       if (workshopIds !== undefined && Array.isArray(workshopIds)) {
         await db.delete(workOrderWorkshops).where(eq(workOrderWorkshops.workOrderId, req.params.id));
@@ -3280,7 +3401,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await db.insert(workOrderWorkshops).values(workshopAssignments);
         }
       }
-      
+
       // Update required parts if provided
       if (requiredParts && Array.isArray(requiredParts)) {
         const partsToInsert = requiredParts.map((part: any) => ({
@@ -3312,16 +3433,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const employee = employeeMap.get(employeeId);
             if (employee) {
               const hourlyRate = employee.hourlyRate || "0";
-              const hourlyRateNum = parseFloat(hourlyRate);
+              const hourlyRateNum = Number(hourlyRate) || 0;
               const minHours = 1 / 60; // 1 minute minimum
               await storage.addLaborEntry({
                 workOrderId: req.params.id,
                 employeeId,
-                hoursWorked: minHours.toString(),
-                hourlyRateSnapshot: hourlyRate,
-                overtimeFactor: "1.0",
-                totalCost: (minHours * hourlyRateNum * 1.0).toFixed(2),
-                workDate: new Date().toISOString().split('T')[0],
+                hoursWorked: minHours,
+                hourlyRateSnapshot: hourlyRateNum,
+                overtimeFactor: 1,
+                totalCost: Number((minHours * hourlyRateNum).toFixed(2)),
+                workDate: new Date(),
                 timeSource: "auto", // Mark for automatic updates
               });
               existingEmployeeIds.add(employeeId);
@@ -3329,7 +3450,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
       res.json(workOrder);
     } catch (error) {
       console.error("Error updating work order:", error);
@@ -3380,7 +3501,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const existingReceptions = await storage.getReceptionsByPrefix(prefix);
       const nextNumber = (existingReceptions.length + 1).toString().padStart(3, '0');
       const receptionNumber = `${prefix}${nextNumber}`;
-      
+
       // Validate and coerce data
       const validatedData = insertEquipmentReceptionSchema.parse({
         ...req.body,
@@ -3389,7 +3510,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         arrivalDate: req.body.arrivalDate ? new Date(req.body.arrivalDate) : new Date(),
         kilometreRiding: req.body.kilometreRiding ? String(req.body.kilometreRiding) : null,
       });
-      
+
       const reception = await storage.createReception(validatedData);
       res.status(201).json(reception);
     } catch (error) {
@@ -3404,7 +3525,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ...req.body,
         updatedAt: new Date(),
       };
-      
+
       const updatedReception = await storage.updateReception(req.params.id, updates);
       res.json(updatedReception);
     } catch (error) {
@@ -3423,11 +3544,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const allReceptions = await storage.getAllReceptions();
       const myInspections = allReceptions.filter(
-        (reception) => 
+        (reception) =>
           reception.inspectionOfficerId === userId &&
           reception.status === "awaiting_mechanic"
       );
-      
+
       res.json(myInspections);
     } catch (error) {
       console.error("Error fetching my inspections:", error);
@@ -3452,20 +3573,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const currentYear = new Date().getFullYear();
       const prefix = `INS-${currentYear}-`;
-      
+
       // Get existing inspections for this year
       const existingInspections = await storage.getInspectionsByPrefix(prefix);
-      
+
       // Generate next inspection number
       const nextNumber = (existingInspections.length + 1).toString().padStart(3, '0');
       const inspectionNumber = `${prefix}${nextNumber}`;
-      
+
       const validatedData = insertEquipmentInspectionSchema.parse({
         ...req.body,
         inspectionNumber,
         inspectionDate: req.body.inspectionDate ? new Date(req.body.inspectionDate) : new Date(),
       });
-      
+
       const inspection = await storage.createInspection(validatedData);
       res.status(201).json(inspection);
     } catch (error) {
@@ -3528,7 +3649,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/inspections/:id", async (req, res) => {
     try {
       const updatedInspection = await storage.updateInspection(req.params.id, req.body);
-      
+
       // If inspection status is being changed to "waiting_for_approval", update reception status to "inspection_complete"
       if (req.body.status === "waiting_for_approval" && updatedInspection.receptionId) {
         try {
@@ -3538,7 +3659,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Don't fail the inspection update if reception update fails
         }
       }
-      
+
       res.json(updatedInspection);
     } catch (error) {
       console.error("Error updating inspection:", error);
@@ -3590,7 +3711,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/inspections/:id/approve", isAuthenticated, async (req, res) => {
     try {
       const { approvedById, notes } = req.body;
-      
+
       if (!approvedById) {
         return res.status(400).json({ error: "Approver ID is required" });
       }
@@ -3601,7 +3722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update inspection status to "approved"
-      const updatedInspection = await storage.updateInspection(req.params.id, { 
+      const updatedInspection = await storage.updateInspection(req.params.id, {
         status: "approved"
       });
 
@@ -3616,7 +3737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/inspections/:id/reject", isAuthenticated, async (req, res) => {
     try {
       const { approvedById, notes } = req.body;
-      
+
       if (!approvedById) {
         return res.status(400).json({ error: "Approver ID is required" });
       }
@@ -3627,7 +3748,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update inspection status to "rejected"
-      const updatedInspection = await storage.updateInspection(req.params.id, { 
+      const updatedInspection = await storage.updateInspection(req.params.id, {
         status: "rejected"
       });
 
@@ -3892,7 +4013,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============ APPROVAL SYSTEM ROUTES ============
-  
+
   // Parts Requests
   app.get("/api/parts-requests", isCEOOrAdmin, async (req, res) => {
     try {
@@ -4048,7 +4169,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertApprovalSchema.parse(req.body);
       const approval = await storage.updateApproval(req.params.id, validatedData);
-      
+
       // If inspection approval is approved, update inspection status to "approved"
       if (approval.approvalType === "inspection" && approval.status === "approved" && approval.referenceId) {
         try {
@@ -4176,7 +4297,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Object Storage endpoints
-  
+
   // Serve public objects from object storage
   app.get("/public-objects/:filePath(*)", async (req, res) => {
     const filePath = req.params.filePath;
@@ -4202,7 +4323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const partId = req.params.id;
       const file = req.file;
-      
+
       if (!file) {
         return res.status(400).json({ error: "No video file provided" });
       }
@@ -4212,36 +4333,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const fileName = `${partId}-${nanoid()}.${fileExtension}`;
       const uploadsDir = join(process.cwd(), 'public', 'uploads', 'spare-parts');
       const filePath = join(uploadsDir, fileName);
-      
+
       // Ensure directory exists
       await mkdir(uploadsDir, { recursive: true });
-      
+
       // Save file to local storage
       await writeFile(filePath, file.buffer);
-      
+
       // Generate URL for accessing the video
       const videoUrl = `/uploads/spare-parts/${fileName}`;
-      
+
       // Update part with video URL
       const part = await storage.updatePartMaintenance(partId, { tutorialVideoUrl: videoUrl });
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
 
       // Send notification to CEO
-      if (process.env.RESEND_API_KEY) {
-        const userEmail = (req as any).user?.email || 'unknown';
-        await sendCEONotification(
-          `Tutorial video uploaded for spare part`,
-          `Part Number: ${part.partNumber}\nPart Name: ${part.partName}\nUploaded by: ${userEmail}`,
-          createNotification(
-            { action: 'tutorial video uploaded', videoUrl }
-          )
-        );
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'updated',
+          'spare_part',
+          part.id,
+          req.user.username || 'unknown',
+          {
+            action: 'tutorial video uploaded',
+            videoUrl,
+            partNumber: part.partNumber,
+            partName: part.partName,
+          }
+        ));
       }
 
-      res.json({ 
+      res.json({
         success: true,
         videoUrl,
         part
@@ -4257,12 +4382,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const objectStorageService = new ObjectStorageService();
       const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-      
+
       // Extract the object path from the upload URL (before query parameters)
       const url = new URL(uploadURL);
       const objectPath = objectStorageService.normalizeObjectEntityPath(url.origin + url.pathname);
-      
-      res.json({ 
+
+      res.json({
         uploadURL,      // For uploading the file
         objectPath      // For storing in database
       });
@@ -4288,21 +4413,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const part = await storage.updatePartMaintenance(req.params.id, {
         tutorialVideoUrl: objectPath,
       });
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
 
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
-          'updated', 'spare_part', part.id, req.user.username || 'unknown', 
+          'updated', 'spare_part', part.id, req.user.username || 'unknown',
           { action: 'tutorial video uploaded', videoUrl: objectPath }
         ));
       }
 
-      res.json({ 
+      res.json({
         part,
-        objectPath 
+        objectPath
       });
     } catch (error) {
       console.error("Error updating tutorial video:", error);
@@ -4314,28 +4439,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/parts/:id/images/upload-urls", isCEOOrAdmin, async (req, res) => {
     try {
       const { count } = req.body;
-      
+
       if (!count || count < 1 || count > 10) {
         return res.status(400).json({ error: "Count must be between 1 and 10" });
       }
-      
+
       const objectStorageService = new ObjectStorageService();
       const uploadData = [];
-      
+
       // Generate a presigned URL for each image
       for (let i = 0; i < count; i++) {
         const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-        
+
         // Extract the object path from the upload URL (before query parameters)
         const url = new URL(uploadURL);
         const objectPath = objectStorageService.normalizeObjectEntityPath(url.origin + url.pathname);
-        
+
         uploadData.push({
           uploadURL,      // For uploading the file
           objectPath      // For storing in database
         });
       }
-      
+
       res.json({ uploadData });
     } catch (error) {
       console.error("Error generating image upload URLs:", error);
@@ -4351,9 +4476,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const objectStorageService = new ObjectStorageService();
-      
+
       // Normalize all object paths
-      const normalizedPaths = req.body.imageUrls.map((url: string) => 
+      const normalizedPaths = req.body.imageUrls.map((url: string) =>
         objectStorageService.normalizeObjectEntityPath(url)
       );
 
@@ -4370,14 +4495,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const part = await storage.updatePart(req.params.id, {
         imageUrls: allImageUrls,
       });
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
 
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
-          'updated', 'spare_part', part.id, req.user.username || 'unknown', 
+          'updated', 'spare_part', part.id, req.user.username || 'unknown',
           { action: 'images uploaded', count: normalizedPaths.length }
         ));
       }
@@ -4393,7 +4518,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.delete("/api/parts/:id/images", isCEOOrAdmin, async (req, res) => {
     try {
       const { imageUrl } = req.body;
-      
+
       if (!imageUrl) {
         return res.status(400).json({ error: "imageUrl is required" });
       }
@@ -4413,14 +4538,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const part = await storage.updatePart(req.params.id, {
         imageUrls: updatedImageUrls,
       });
-      
+
       if (!part) {
         return res.status(404).json({ error: "Part not found" });
       }
 
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
-          'updated', 'spare_part', part.id, req.user.username || 'unknown', 
+          'updated', 'spare_part', part.id, req.user.username || 'unknown',
           { action: 'image deleted', imageUrl }
         ));
       }
@@ -4571,10 +4696,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(result);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          error: "Invalid connection parameters", 
-          details: error.errors 
+          error: "Invalid connection parameters",
+          details: error.errors
         });
       }
       console.error("Device connection test error:", error);
@@ -4593,9 +4718,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { ipAddress, port, timeout } = validatedData;
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(ipAddress, port, timeout);
-      
+
       const deviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       res.json({
         success: true,
         users: deviceUsers,
@@ -4603,10 +4728,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          error: "Invalid parameters", 
-          details: error.errors 
+          error: "Invalid parameters",
+          details: error.errors
         });
       }
       console.error("Fetch users error:", error);
@@ -4623,21 +4748,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const settings = await storage.getAttendanceDeviceSettings();
       if (!settings) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Device settings not configured" 
+        return res.status(400).json({
+          success: false,
+          message: "Device settings not configured"
         });
       }
 
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(
-        settings.ipAddress, 
-        settings.port, 
+        settings.ipAddress,
+        settings.port,
         settings.timeout
       );
 
       const deviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       let imported = 0;
       let updated = 0;
       let skipped = 0;
@@ -4647,17 +4772,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Try multiple matching strategies to find existing employee
           let existingEmployee = await storage.getEmployeeByDeviceUserId(deviceUser.userId);
-          
+
           // If not found by deviceUserId, try matching by employeeId (if deviceUserId is badge number)
           if (!existingEmployee) {
             existingEmployee = await storage.getEmployeeByEmployeeId(deviceUser.userId);
           }
-          
+
           // If still not found, try matching by normalized name
           if (!existingEmployee && deviceUser.name) {
             existingEmployee = await storage.getEmployeeByName(deviceUser.name.trim());
           }
-          
+
           if (existingEmployee) {
             // Update existing employee with device ID
             await storage.updateEmployee(existingEmployee.id, {
@@ -4725,14 +4850,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(ipAddress, port, timeout);
-      
+
       const allDeviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       // Filter to only selected users
-      const selectedUsers = allDeviceUsers.filter(user => 
+      const selectedUsers = allDeviceUsers.filter(user =>
         selectedUserIds.includes(user.userId)
       );
-      
+
       let imported = 0;
       let updated = 0;
       let skipped = 0;
@@ -4742,17 +4867,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Try multiple matching strategies to find existing employee
           let existingEmployee = await storage.getEmployeeByDeviceUserId(deviceUser.userId);
-          
+
           // If not found by deviceUserId, try matching by employeeId (if deviceUserId is badge number)
           if (!existingEmployee) {
             existingEmployee = await storage.getEmployeeByEmployeeId(deviceUser.userId);
           }
-          
+
           // If still not found, try matching by normalized name
           if (!existingEmployee && deviceUser.name) {
             existingEmployee = await storage.getEmployeeByName(deviceUser.name.trim());
           }
-          
+
           if (existingEmployee) {
             // Update existing employee with device ID
             await storage.updateEmployee(existingEmployee.id, {
@@ -4808,10 +4933,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: "Invalid request data", 
-          details: error.errors 
+          message: "Invalid request data",
+          details: error.errors
         });
       }
       console.error("Selected user import error:", error);
@@ -4828,21 +4953,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const settings = await storage.getAttendanceDeviceSettings();
       if (!settings) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Device settings not configured" 
+        return res.status(400).json({
+          success: false,
+          message: "Device settings not configured"
         });
       }
 
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(
-        settings.ipAddress, 
-        settings.port, 
+        settings.ipAddress,
+        settings.port,
         settings.timeout
       );
 
       const deviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       let newUsers = 0;
       const errors: string[] = [];
 
@@ -4850,17 +4975,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Try multiple matching strategies to find existing employee
           let existingEmployee = await storage.getEmployeeByDeviceUserId(deviceUser.userId);
-          
+
           // If not found by deviceUserId, try matching by employeeId (if deviceUserId is badge number)
           if (!existingEmployee) {
             existingEmployee = await storage.getEmployeeByEmployeeId(deviceUser.userId);
           }
-          
+
           // If still not found, try matching by normalized name
           if (!existingEmployee && deviceUser.name) {
             existingEmployee = await storage.getEmployeeByName(deviceUser.name.trim());
           }
-          
+
           if (!existingEmployee) {
             // Only create new employee if no match found
             await storage.createEmployee({
@@ -5005,16 +5130,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const settings = await storage.getAttendanceDeviceSettings();
       if (!settings) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "No active device configured" 
+        return res.status(400).json({
+          success: false,
+          message: "No active device configured"
         });
       }
 
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(settings.ipAddress, settings.port, settings.timeout);
       const deviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       res.json({
         success: true,
         users: deviceUsers,
@@ -5034,7 +5159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/biometric-imports/import-selected", isCEOOrAdmin, async (req, res) => {
     try {
       const { userIds } = req.body;
-      
+
       if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
         return res.status(400).json({
           success: false,
@@ -5044,22 +5169,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const settings = await storage.getAttendanceDeviceSettings();
       if (!settings) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "Device settings not configured" 
+        return res.status(400).json({
+          success: false,
+          message: "Device settings not configured"
         });
       }
 
       const { createDeviceService } = await import('./deviceService');
       const deviceService = createDeviceService(settings.ipAddress, settings.port, settings.timeout);
-      
+
       const allDeviceUsers = await deviceService.getAllUsersWithConnection();
-      
+
       // Filter to only selected users
-      const selectedUsers = allDeviceUsers.filter(user => 
+      const selectedUsers = allDeviceUsers.filter(user =>
         userIds.includes(user.userId)
       );
-      
+
       let imported = 0;
       let updated = 0;
       let skipped = 0;
@@ -5069,17 +5194,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           // Try multiple matching strategies to find existing employee
           let existingEmployee = await storage.getEmployeeByDeviceUserId(deviceUser.userId);
-          
+
           // If not found by deviceUserId, try matching by employeeId (if deviceUserId is badge number)
           if (!existingEmployee) {
             existingEmployee = await storage.getEmployeeByEmployeeId(deviceUser.userId);
           }
-          
+
           // If still not found, try matching by normalized name
           if (!existingEmployee && deviceUser.name) {
             existingEmployee = await storage.getEmployeeByName(deviceUser.name.trim());
           }
-          
+
           if (existingEmployee) {
             // Update existing employee with device ID
             await storage.updateEmployee(existingEmployee.id, {
@@ -5166,7 +5291,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!existingEmployee && deviceUser.name) {
             existingEmployee = await storage.getEmployeeByName(deviceUser.name.trim());
           }
-          
+
           if (existingEmployee) {
             await storage.updateEmployee(existingEmployee.id, {
               deviceUserId: deviceUser.userId,
@@ -5222,7 +5347,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deviceUsers = await deviceService.getAllUsersWithConnection();
 
       const existingEmployees = await storage.getAllEmployees();
-      const newUsers = deviceUsers.filter(du => 
+      const newUsers = deviceUsers.filter(du =>
         !existingEmployees.some((e: any) => e.deviceUserId === du.userId)
       );
 
@@ -5287,20 +5412,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = (req as any).user;
       const { bcPassword, ...otherSettings } = req.body;
-      
+
       // Get existing settings to preserve password if not provided
       const existingSettings = await storage.getDynamics365Settings();
-      
+
       // Prepare data: keep existing password if new one is empty
       const dataToSave = {
         ...otherSettings,
-        bcPassword: bcPassword && bcPassword.trim() !== "" 
-          ? bcPassword 
+        bcPassword: bcPassword && bcPassword.trim() !== ""
+          ? bcPassword
           : existingSettings?.bcPassword || bcPassword,
       };
-      
+
       const settings = await storage.saveDynamics365Settings(dataToSave, user.id);
-      
+
       // Don't send password to frontend
       const { bcPassword: _, ...safeSettings } = settings;
       res.json(safeSettings);
@@ -5314,24 +5439,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/test", isCEOOrAdmin, async (req, res) => {
     try {
       let { bcUrl, bcUsername, bcPassword, bcCompany } = req.body;
-      
+
       // If password is empty, try to get it from saved settings
       if (!bcPassword || bcPassword.trim() === "") {
         const existingSettings = await storage.getDynamics365Settings();
         if (existingSettings?.bcPassword) {
           bcPassword = existingSettings.bcPassword;
         } else {
-          return res.status(400).json({ 
-            success: false, 
-            message: "Password is required. Please enter a password or save settings first." 
+          return res.status(400).json({
+            success: false,
+            message: "Password is required. Please enter a password or save settings first."
           });
         }
       }
-      
+
       if (!bcUrl || !bcUsername || !bcCompany) {
-        return res.status(400).json({ 
-          success: false, 
-          message: "URL, username, and company name are required" 
+        return res.status(400).json({
+          success: false,
+          message: "URL, username, and company name are required"
         });
       }
 
@@ -5342,15 +5467,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         username: bcUsername,
         company: bcCompany,
       });
-      
+
       let response: any = null;
       let authMethod = '';
-      
+
       // Try NTLM authentication first
       try {
         console.log('Attempting NTLM authentication...');
         const httpntlm = (await import('httpntlm')).default;
-        
+
         response = await new Promise((resolve, reject) => {
           httpntlm.get({
             url: testUrl,
@@ -5369,10 +5494,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         authMethod = 'NTLM';
       } catch (ntlmError: any) {
         console.log('NTLM failed, trying Basic Authentication...', ntlmError.message);
-        
+
         // Fall back to Basic Authentication
         const axios = (await import('axios')).default;
-        
+
         try {
           const axiosResponse = await axios.get(testUrl, {
             auth: {
@@ -5381,7 +5506,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
             timeout: 10000,
           });
-          
+
           response = {
             statusCode: axiosResponse.status,
             body: JSON.stringify(axiosResponse.data),
@@ -5392,33 +5517,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw basicError;
         }
       }
-      
+
       try {
 
         if (response.statusCode === 200 || response.status === 200) {
           // Update test result in database if settings exist
           await storage.updateDynamics365TestResult('success', `Connection successful using ${authMethod} authentication`);
-          
+
           console.log(`D365 connection successful using ${authMethod} authentication`);
-          
-          res.json({ 
-            success: true, 
-            message: `Connection successful! Successfully connected to Dynamics 365 Business Central using ${authMethod} authentication.` 
+
+          res.json({
+            success: true,
+            message: `Connection successful! Successfully connected to Dynamics 365 Business Central using ${authMethod} authentication.`
           });
         } else {
           const statusCode = response.statusCode || response.status || 503;
           await storage.updateDynamics365TestResult('failed', `Unexpected response: ${statusCode}`);
-          res.status(503).json({ 
-            success: false, 
-            message: `Connection failed with status ${statusCode}` 
+          res.status(503).json({
+            success: false,
+            message: `Connection failed with status ${statusCode}`
           });
         }
       } catch (authError: any) {
         let errorMessage = "Connection failed";
         let statusCode = 503;
-        
+
         console.error('D365 connection error:', authError);
-        
+
         if (authError.code === 'ECONNREFUSED') {
           errorMessage = "Cannot connect to server. Please check the URL and ensure the D365 Business Central server is running.";
           statusCode = 503;
@@ -5448,20 +5573,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errorMessage = authError.message || "Unknown connection error. Ensure D365 Business Central Web Services are enabled.";
           statusCode = 503;
         }
-        
+
         await storage.updateDynamics365TestResult('failed', errorMessage);
-        
-        res.status(statusCode).json({ 
-          success: false, 
-          message: errorMessage 
+
+        res.status(statusCode).json({
+          success: false,
+          message: errorMessage
         });
       }
     } catch (error: any) {
       console.error("D365 connection test error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Connection test failed", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Connection test failed",
+        error: error.message
       });
     }
   });
@@ -5471,7 +5596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { d365Service } = await import('./services/dynamics365');
       const isConnected = await d365Service.testConnection();
-      
+
       if (isConnected) {
         res.json({ success: true, message: "Connection successful" });
       } else {
@@ -5479,10 +5604,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error("D365 connection test error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Connection test failed", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Connection test failed",
+        error: error.message
       });
     }
   });
@@ -5495,11 +5620,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const username = process.env.D365_BC_USERNAME;
       const password = process.env.D365_BC_PASSWORD;
       const company = process.env.D365_BC_COMPANY;
-      
+
       if (!url || !username || !password || !company) {
-        return res.status(500).json({ 
-          success: false, 
-          message: "D365 credentials not configured" 
+        return res.status(500).json({
+          success: false,
+          message: "D365 credentials not configured"
         });
       }
 
@@ -5510,13 +5635,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         company.replace('(Test', ''), // Remove (Test: "Sunshine Construction PLC"
         company.replace('(Test', '(Test)'), // Fix parenthesis: "Sunshine Construction PLC(Test)"
       ];
-      
+
       const endpoints: string[] = [];
-      
+
       // Test each company name variation with different endpoint patterns
       for (const companyName of companyVariations) {
         const encodedCompany = encodeURIComponent(companyName);
-        
+
         // Note: baseURL already includes /SUNCONBC1/, don't duplicate it
         endpoints.push(
           // BC published web service format (lowercase 'items')
@@ -5527,7 +5652,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           `api/v2.0/companies('${encodedCompany}')/items`,
         );
       }
-      
+
       // Also test without company
       endpoints.push(
         `ODataV4/items`,
@@ -5536,12 +5661,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       const results = [];
-      
+
       for (const endpoint of endpoints) {
         try {
           const fullUrl = `${url}${endpoint}`;
           console.log(`Testing: ${fullUrl}`);
-          
+
           const response = await axios.get(fullUrl, {
             auth: { username, password },
             headers: {
@@ -5550,14 +5675,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             },
             timeout: 10000,
           });
-          
+
           results.push({
             endpoint,
             status: response.status,
             success: true,
             itemCount: response.data?.value?.length || (Array.isArray(response.data) ? response.data.length : 0),
           });
-          
+
           console.log(`✓ Success: ${endpoint} - ${response.status}`);
         } catch (error: any) {
           results.push({
@@ -5566,27 +5691,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
             success: false,
             error: error.response?.data?.error?.message || error.message,
           });
-          
+
           console.log(`✗ Failed: ${endpoint} - ${error.response?.status || 'Network Error'}`);
         }
       }
-      
+
       const successfulEndpoint = results.find(r => r.success);
-      
+
       res.json({
         success: !!successfulEndpoint,
-        message: successfulEndpoint 
-          ? `Found working endpoint: ${successfulEndpoint.endpoint}` 
+        message: successfulEndpoint
+          ? `Found working endpoint: ${successfulEndpoint.endpoint}`
           : 'No working endpoint found',
         workingEndpoint: successfulEndpoint?.endpoint || null,
         results,
       });
     } catch (error: any) {
       console.error("D365 endpoint test error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Endpoint test failed", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Endpoint test failed",
+        error: error.message
       });
     }
   });
@@ -5595,16 +5720,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/sync-items", isCEOOrAdmin, async (_req, res) => {
     try {
       const { d365Service } = await import('./services/dynamics365');
-      
+
       // Fetch items starting with "SP-"
       const d365Items = await d365Service.fetchItemsByPrefix('SP-');
-      
+
       console.log(`Fetched ${d365Items.length} items from Dynamics 365`);
-      
+
       // Save items to database
       let savedCount = 0;
       let updatedCount = 0;
-      
+
       for (const d365Item of d365Items) {
         try {
           // Check if item exists
@@ -5612,7 +5737,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from(items)
             .where(eq(items.itemNo, d365Item.No))
             .limit(1);
-          
+
           const itemData = {
             itemNo: d365Item.No,
             description: d365Item.Description,
@@ -5628,7 +5753,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             syncedAt: new Date(),
             updatedAt: new Date(),
           };
-          
+
           if (existingItem.length > 0) {
             // Update existing item
             await db.update(items)
@@ -5644,9 +5769,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           console.error(`Error saving item ${d365Item.No}:`, itemError.message);
         }
       }
-      
+
       console.log(`Saved ${savedCount} new items, updated ${updatedCount} items`);
-      
+
       res.json({
         success: true,
         itemsCount: d365Items.length,
@@ -5656,10 +5781,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("D365 items sync error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Sync failed", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Sync failed",
+        error: error.message
       });
     }
   });
@@ -5669,9 +5794,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { itemNo } = req.params;
       const { d365Service } = await import('./services/dynamics365');
-      
+
       const item = await d365Service.fetchItemByNumber(itemNo);
-      
+
       if (item) {
         res.json(item);
       } else {
@@ -5679,9 +5804,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error("D365 item fetch error:", error);
-      res.status(500).json({ 
-        error: "Failed to fetch item", 
-        message: error.message 
+      res.status(500).json({
+        error: "Failed to fetch item",
+        message: error.message
       });
     }
   });
@@ -5690,7 +5815,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/preview-items", isCEOOrAdmin, async (req, res) => {
     try {
       const { prefix } = req.body;
-      
+
       if (!prefix || typeof prefix !== 'string') {
         return res.status(400).json({ error: "Prefix is required" });
       }
@@ -5698,14 +5823,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get D365 settings from database
       const d365Settings = await storage.getDynamics365Settings();
       if (!d365Settings) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          error: "D365 settings not configured. Please save settings first." 
+          error: "D365 settings not configured. Please save settings first."
         });
       }
 
       const { fetchItemsNTLM } = await import('./services/dynamics365-ntlm');
-      
+
       // Fetch items with the specified prefix using NTLM
       const d365Items = await fetchItemsNTLM({
         bcUrl: d365Settings.bcUrl,
@@ -5713,22 +5838,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         bcUsername: d365Settings.bcUsername,
         bcPassword: d365Settings.bcPassword,
       }, prefix);
-      
+
       console.log(`Found ${d365Items.length} items with prefix "${prefix}" from Dynamics 365`);
-      
+
       // Check which items already exist in database
       const itemsWithStatus = await Promise.all(d365Items.map(async (d365Item) => {
         const existingItem = await db.select()
           .from(items)
           .where(eq(items.itemNo, d365Item.No))
           .limit(1);
-        
+
         return {
           ...d365Item,
           existsInDb: existingItem.length > 0,
         };
       }));
-      
+
       res.json({
         success: true,
         items: itemsWithStatus,
@@ -5738,10 +5863,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("D365 preview items error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to preview items", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to preview items",
+        error: error.message
       });
     }
   });
@@ -5750,7 +5875,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/preview-equipment", isCEOOrAdmin, async (req, res) => {
     try {
       const { prefix } = req.body;
-      
+
       if (!prefix || typeof prefix !== 'string') {
         return res.status(400).json({ error: "Prefix is required" });
       }
@@ -5758,14 +5883,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get D365 settings from database
       const d365Settings = await storage.getDynamics365Settings();
       if (!d365Settings) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          error: "D365 settings not configured. Please save settings first." 
+          error: "D365 settings not configured. Please save settings first."
         });
       }
 
       const { fetchEquipmentNTLM } = await import('./services/dynamics365-ntlm');
-      
+
       // Fetch equipment with the specified prefix using NTLM
       const d365Equipment = await fetchEquipmentNTLM({
         bcUrl: d365Settings.bcUrl,
@@ -5773,9 +5898,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         bcUsername: d365Settings.bcUsername,
         bcPassword: d365Settings.bcPassword,
       }, prefix);
-      
+
       console.log(`Found ${d365Equipment.length} equipment with prefix "${prefix}" from Dynamics 365`);
-      
+
       // Check which equipment already exist in database
       const equipmentWithStatus = await Promise.all(d365Equipment.map(async (d365Equip) => {
         // Check by asset number or other unique identifier
@@ -5783,13 +5908,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .from(equipment)
           .where(eq(equipment.assetNo, d365Equip.Asset_No || d365Equip.No))
           .limit(1);
-        
+
         return {
           ...d365Equip,
           existsInDb: existingEquip.length > 0,
         };
       }));
-      
+
       res.json({
         success: true,
         equipment: equipmentWithStatus,
@@ -5799,10 +5924,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("D365 preview equipment error:", error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to preview equipment", 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        message: "Failed to preview equipment",
+        error: error.message
       });
     }
   });
@@ -5811,13 +5936,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/receive-data", async (req, res) => {
     try {
       const { apiKey, items: receivedItems, equipment: receivedEquipment, syncType } = req.body;
-      
+
       // Validate API key (should match D365 settings or system secret)
       const d365Settings = await storage.getDynamics365Settings();
       if (!d365Settings || apiKey !== d365Settings.id) {
-        return res.status(401).json({ 
+        return res.status(401).json({
           success: false,
-          error: "Invalid API key" 
+          error: "Invalid API key"
         });
       }
 
@@ -5839,7 +5964,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .from(items)
               .where(eq(items.itemNo, d365Item.No))
               .limit(1);
-            
+
             // Store in preview table
             await db.insert(d365ItemsPreview).values({
               syncId: batchSyncId,
@@ -5894,9 +6019,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Receive data error:", error);
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        error: error.message
       });
     }
   });
@@ -5942,9 +6067,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Preview items error:", error);
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        error: error.message
       });
     }
   });
@@ -5970,11 +6095,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate that all selectedItemIds belong to this sync
       const validIds = new Set(allSyncItems.map((item: any) => item.id));
       const invalidIds = selectedItemIds.filter((id: string) => !validIds.has(id));
-      
+
       if (invalidIds.length > 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: "Invalid item IDs: some items do not belong to this sync",
-          invalidIds 
+          invalidIds
         });
       }
 
@@ -6052,9 +6177,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("Import selected error:", error);
-      res.status(500).json({ 
-        success: false, 
-        error: error.message 
+      res.status(500).json({
+        success: false,
+        error: error.message
       });
     }
   });
@@ -6063,7 +6188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/import-items", isAuthenticated, async (req, res) => {
     try {
       const { items: selectedItems, prefix } = req.body;
-      
+
       if (!Array.isArray(selectedItems) || selectedItems.length === 0) {
         return res.status(400).json({ error: "No items selected for import" });
       }
@@ -6072,7 +6197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let updatedCount = 0;
       let skippedCount = 0;
       const errors: string[] = [];
-      
+
       for (const d365Item of selectedItems) {
         try {
           // Check if item exists
@@ -6080,7 +6205,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .from(items)
             .where(eq(items.itemNo, d365Item.No))
             .limit(1);
-          
+
           const itemData = {
             itemNo: d365Item.No,
             description: d365Item.Description,
@@ -6096,7 +6221,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             syncedAt: new Date(),
             updatedAt: new Date(),
           };
-          
+
           if (existingItem.length > 0) {
             // Update existing item
             await db.update(items)
@@ -6114,7 +6239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           skippedCount++;
         }
       }
-      
+
       // Create sync log entry
       const logStatus = errors.length > 0 ? (errors.length === selectedItems.length ? "failed" : "partial") : "success";
       await db.insert(d365SyncLogs).values({
@@ -6128,9 +6253,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         errorMessage: errors.length > 0 ? errors.join("; ") : null,
         importData: JSON.stringify(selectedItems.slice(0, 10)), // Store first 10 items as sample
       });
-      
+
       console.log(`Imported ${savedCount} new items, updated ${updatedCount} items`);
-      
+
       res.json({
         success: true,
         savedCount,
@@ -6140,7 +6265,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("D365 import items error:", error);
-      
+
       // Log the failed import
       try {
         await db.insert(d365SyncLogs).values({
@@ -6156,11 +6281,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (logError) {
         console.error("Failed to log import error:", logError);
       }
-      
-      res.status(500).json({ 
-        success: false, 
-        message: "Import failed", 
-        error: error.message 
+
+      res.status(500).json({
+        success: false,
+        message: "Import failed",
+        error: error.message
       });
     }
   });
@@ -6169,7 +6294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/dynamics365/import-equipment", isAuthenticated, async (req, res) => {
     try {
       const { equipment: selectedEquipment, defaultCategoryId, prefix } = req.body;
-      
+
       if (!Array.isArray(selectedEquipment) || selectedEquipment.length === 0) {
         return res.status(400).json({ error: "No equipment selected for import" });
       }
@@ -6179,37 +6304,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let skippedCount = 0;
       let categoriesCreated = 0;
       const errors: string[] = [];
-      
+
       // Helper function to detect if asset number is a category (ends with 0000)
       const isCategoryAsset = (assetNo: string): boolean => {
         return /0000$/.test(assetNo);
       };
-      
+
       // Helper function to get category asset number from unit asset number
       // Example: HV-AD-0015 -> HV-AD-0000
       const getCategoryAssetNo = (assetNo: string): string => {
         return assetNo.replace(/\d{4}$/, '0000');
       };
-      
+
       // First pass: Create categories from 0000 assets
       const categoryMap = new Map<string, string>(); // Maps category asset number to category ID
-      
+
       for (const d365Equip of selectedEquipment) {
         const assetNo = d365Equip.Asset_No || d365Equip.No;
-        
+
         if (isCategoryAsset(assetNo)) {
           const fullDescription = d365Equip.Description || "";
           const parsed = parseEquipmentDescription(fullDescription);
           const categoryName = parsed.equipmentName || d365Equip.Type || assetNo;
-          
+
           console.log(`[CATEGORY] Detected category asset: ${assetNo} -> "${categoryName}"`);
-          
+
           // Check if category already exists by name
           const existingCategory = await db.select()
             .from(equipmentCategories)
             .where(eq(equipmentCategories.name, categoryName))
             .limit(1);
-          
+
           if (existingCategory.length > 0) {
             categoryMap.set(assetNo, existingCategory[0].id);
             console.log(`[CATEGORY] Using existing category: ${categoryName} (${existingCategory[0].id})`);
@@ -6224,40 +6349,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
       }
-      
+
       // Second pass: Import equipment and assign categories
       for (const d365Equip of selectedEquipment) {
         try {
           const assetNo = d365Equip.Asset_No || d365Equip.No;
           const fullDescription = d365Equip.Description || "";
-          
+
           // Skip category assets (0000) - they're not actual equipment units
           if (isCategoryAsset(assetNo)) {
             console.log(`[SKIP] Skipping category asset: ${assetNo}`);
             continue;
           }
-          
+
           // Parse the description to extract equipment name, plate number, and serial number
           const parsed = parseEquipmentDescription(fullDescription);
-          
+
           // Determine category for this equipment
           let categoryId = defaultCategoryId || null;
-          
+
           // Try to find category based on asset number pattern
           const categoryAssetNo = getCategoryAssetNo(assetNo);
           if (categoryMap.has(categoryAssetNo)) {
             categoryId = categoryMap.get(categoryAssetNo)!;
             console.log(`[AUTO-CATEGORY] ${assetNo} -> category ${categoryAssetNo} (${categoryId})`);
           }
-          
+
           console.log(`Parsed ${assetNo}: name="${parsed.equipmentName}", plate="${parsed.plateNumber}", serial="${parsed.serialNumber}", categoryId=${categoryId}`);
-          
+
           // Check if equipment exists by asset number
           const existingEquip = await db.select()
             .from(equipment)
             .where(eq(equipment.assetNo, assetNo))
             .limit(1);
-          
+
           const equipData = {
             categoryId: categoryId,
             equipmentType: parsed.equipmentName || d365Equip.Type || 'UNKNOWN',
@@ -6266,11 +6391,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             plateNo: parsed.plateNumber || null,
             assetNo: assetNo,
             machineSerial: parsed.serialNumber || d365Equip.Serial_No || null,
-            plantNumber: d365Equip.Plant_Number || null,
             price: d365Equip.Unit_Price?.toString() || null,
             remarks: `Imported from D365 - ${parsed.description}`,
           };
-          
+
           if (existingEquip.length > 0) {
             // Update existing equipment
             await db.update(equipment)
@@ -6288,7 +6412,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           skippedCount++;
         }
       }
-      
+
       // Create sync log entry
       const logStatus = errors.length > 0 ? (errors.length === selectedEquipment.length ? "failed" : "partial") : "success";
       await db.insert(d365SyncLogs).values({
@@ -6302,9 +6426,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         errorMessage: errors.length > 0 ? errors.join("; ") : null,
         importData: JSON.stringify(selectedEquipment.slice(0, 10)), // Store first 10 items as sample
       });
-      
+
       console.log(`Imported ${savedCount} new equipment, updated ${updatedCount} equipment, created ${categoriesCreated} categories`);
-      
+
       res.json({
         success: true,
         savedCount,
@@ -6316,7 +6440,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error: any) {
       console.error("D365 import equipment error:", error);
-      
+
       // Log the failed import
       try {
         await db.insert(d365SyncLogs).values({
@@ -6332,11 +6456,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } catch (logError) {
         console.error("Failed to log import error:", logError);
       }
-      
-      res.status(500).json({ 
-        success: false, 
-        message: "Import failed", 
-        error: error.message 
+
+      res.status(500).json({
+        success: false,
+        message: "Import failed",
+        error: error.message
       });
     }
   });
@@ -6499,7 +6623,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // ==================== NTLM D365 Direct Connection Routes ====================
-  
+
   // Import NTLM helpers
   const { testD365Connection, fetchD365Customers, fetchD365Items, fetchD365Equipment } = await import("./d365-ntlm");
 
@@ -6520,7 +6644,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       };
 
       const result = await testD365Connection(config);
-      
+
       // Update test status in database
       await db.update(dynamics365Settings)
         .set({
@@ -6531,14 +6655,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         .where(eq(dynamics365Settings.id, d365Settings.id));
 
       if (result.success) {
-        res.json({ 
-          success: true, 
+        res.json({
+          success: true,
           message: "Connected to D365 Business Central successfully!",
           statusCode: result.statusCode,
         });
       } else {
-        res.status(500).json({ 
-          success: false, 
+        res.status(500).json({
+          success: false,
           error: result.error,
           statusCode: result.statusCode,
         });
@@ -6575,8 +6699,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           count: result.data?.value?.length || 0,
         });
       } else {
-        res.status(500).json({ 
-          success: false, 
+        res.status(500).json({
+          success: false,
           error: result.error,
           statusCode: result.statusCode,
         });
@@ -6614,8 +6738,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           prefix: d365Settings.itemPrefix,
         });
       } else {
-        res.status(500).json({ 
-          success: false, 
+        res.status(500).json({
+          success: false,
           error: result.error,
           statusCode: result.statusCode,
         });
@@ -6653,8 +6777,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           prefix: d365Settings.equipmentPrefix,
         });
       } else {
-        res.status(500).json({ 
-          success: false, 
+        res.status(500).json({
+          success: false,
           error: result.error,
           statusCode: result.statusCode,
         });
@@ -6671,7 +6795,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const logs = await db.select()
         .from(d365SyncLogs)
         .orderBy(sql`${d365SyncLogs.createdAt} DESC`);
-      
+
       res.json(logs);
     } catch (error: any) {
       console.error("Error fetching D365 sync logs:", error);
@@ -6686,16 +6810,16 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     return new Promise((resolve, reject) => {
       // Check if running on Windows
       if (process.platform !== 'win32') {
-        return reject({ 
+        return reject({
           status: 'error',
           message: 'PowerShell sync is only available on Windows environments',
           platform: process.platform
         });
       }
-      
+
       // Use path to PowerShell script in Syncto365 folder (same as Syncto365/server.js)
       const scriptPath = join(process.cwd(), 'Syncto365', 'bc_fetch.ps1');
-      
+
       const ps = spawn('powershell.exe', [
         '-ExecutionPolicy',
         'Bypass',
@@ -6717,20 +6841,20 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
       ps.on('close', (code: number) => {
         if (code !== 0 || error) {
-          return reject({ 
-            code, 
+          return reject({
+            code,
             message: error || 'PowerShell failed',
-            output 
+            output
           });
         }
-        
+
         try {
           const result = JSON.parse(output);
           resolve(result);
         } catch (e) {
-          reject({ 
-            message: 'Invalid JSON output', 
-            output 
+          reject({
+            message: 'Invalid JSON output',
+            output
           });
         }
       });
@@ -6777,15 +6901,15 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   // Fetch D365 data using PowerShell (Companies, Items, FixedAssets)
   app.post("/api/dynamics365/ps-fetch-data", isCEOOrAdmin, async (req, res) => {
     try {
-      const { 
-        baseUrl, 
-        username, 
-        password, 
-        companyName, 
-        type, 
+      const {
+        baseUrl,
+        username,
+        password,
+        companyName,
+        type,
         filterValue,
         skip,
-        top 
+        top
       } = req.body;
 
       if (!baseUrl || !username || !password) {
@@ -6860,7 +6984,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           } else {
             stockStatus = 'in_stock';
           }
-          
+
           const newPart = await db.insert(spareParts).values({
             partNumber: item.No,
             partName: item.Description || item.No,
@@ -6905,18 +7029,18 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // ==================== D365 Settings Routes ====================
-  
+
   // Get D365 settings
   app.get("/api/dynamics365/settings", isCEOOrAdmin, async (req, res) => {
     try {
       const settings = await db.select()
         .from(dynamics365Settings)
         .limit(1);
-      
+
       if (settings.length === 0) {
         return res.json(null);
       }
-      
+
       res.json(settings[0]);
     } catch (error: any) {
       console.error("Error fetching D365 settings:", error);
@@ -6928,10 +7052,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/dynamics365/settings", isCEOOrAdmin, async (req, res) => {
     try {
       const { bcUrl, bcUsername, bcPassword, bcCompany } = req.body;
-      
+
       if (!bcUrl || !bcUsername || !bcPassword) {
-        return res.status(400).json({ 
-          error: "Base URL, username, and password are required" 
+        return res.status(400).json({
+          error: "Base URL, username, and password are required"
         });
       }
 
@@ -6941,7 +7065,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         .limit(1);
 
       let savedSettings;
-      
+
       if (existing.length === 0) {
         // Create new settings
         const newSettings = await db.insert(dynamics365Settings)
@@ -6967,7 +7091,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           .returning();
         savedSettings = updated[0];
       }
-      
+
       res.json(savedSettings);
     } catch (error: any) {
       console.error("Error saving D365 settings:", error);
@@ -6976,14 +7100,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // ==================== Items CRUD Routes ====================
-  
+
   // Get all items from database
   app.get("/api/items", async (req, res) => {
     try {
       const { search } = req.query;
-      
+
       let query = db.select().from(items).$dynamic();
-      
+
       if (search && typeof search === 'string') {
         query = query.where(
           or(
@@ -6992,7 +7116,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           )
         );
       }
-      
+
       const allItems = await query;
       res.json(allItems);
     } catch (error: any) {
@@ -7008,11 +7132,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         .from(items)
         .where(eq(items.id, req.params.id))
         .limit(1);
-      
+
       if (item.length === 0) {
         return res.status(404).json({ error: "Item not found" });
       }
-      
+
       res.json(item[0]);
     } catch (error: any) {
       console.error("Error fetching item:", error);
@@ -7024,22 +7148,22 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/items", isCEOOrAdmin, async (req, res) => {
     try {
       const itemData = insertItemSchema.parse(req.body);
-      
+
       const newItem = await db.insert(items)
         .values({
           ...itemData,
           syncedAt: new Date(),
         })
         .returning();
-      
+
       res.status(201).json(newItem[0]);
     } catch (error: any) {
       console.error("Error creating item:", error);
-      
+
       if (error.code === '23505') {
         return res.status(400).json({ error: "Item with this number already exists" });
       }
-      
+
       res.status(500).json({ error: "Failed to create item" });
     }
   });
@@ -7048,7 +7172,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.patch("/api/items/:id", isCEOOrAdmin, async (req, res) => {
     try {
       const itemData = insertItemSchema.partial().parse(req.body);
-      
+
       const updatedItem = await db.update(items)
         .set({
           ...itemData,
@@ -7056,11 +7180,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         })
         .where(eq(items.id, req.params.id))
         .returning();
-      
+
       if (updatedItem.length === 0) {
         return res.status(404).json({ error: "Item not found" });
       }
-      
+
       res.json(updatedItem[0]);
     } catch (error: any) {
       console.error("Error updating item:", error);
@@ -7074,11 +7198,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const deletedItem = await db.delete(items)
         .where(eq(items.id, req.params.id))
         .returning();
-      
+
       if (deletedItem.length === 0) {
         return res.status(404).json({ error: "Item not found" });
       }
-      
+
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting item:", error);
@@ -7087,13 +7211,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // ==================== SYSTEM SETTINGS ROUTES ====================
-  
+
   // Get system settings
   app.get("/api/system-settings", isCEOOrAdmin, async (_req, res) => {
     try {
       const { systemSettings } = await import("@shared/schema");
       const settings = await db.select().from(systemSettings).limit(1);
-      
+
       if (settings.length === 0) {
         // Return default settings if none exist
         return res.json({
@@ -7101,10 +7225,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           serverPort: 3000,
         });
       }
-      
+
       // Never send encrypted credentials to frontend - security risk
       const { mellatechUsername, mellatechPassword, ...safeSettings } = settings[0];
-      
+
       res.json(safeSettings);
     } catch (error: any) {
       console.error("Error fetching system settings:", error);
@@ -7129,9 +7253,9 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         WHERE table_schema = 'public'
         ORDER BY table_name, ordinal_position;
       `;
-      
+
       const tablesResult = await db.execute(sql.raw(schemaQuery));
-      
+
       // Get constraints (primary keys, foreign keys, unique)
       const constraintsQuery = `
         SELECT
@@ -7151,18 +7275,18 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         WHERE tc.table_schema = 'public'
         ORDER BY tc.table_name, tc.constraint_type;
       `;
-      
+
       const constraintsResult = await db.execute(sql.raw(constraintsQuery));
-      
+
       // Generate SQL schema export
       const timestamp = new Date().toISOString().split('T')[0];
       let sqlContent = `-- Gelan Terminal Maintenance - Database Schema Export\n`;
       sqlContent += `-- Generated: ${new Date().toLocaleString()}\n`;
       sqlContent += `-- Database: PostgreSQL\n\n`;
-      
+
       sqlContent += `-- Tables and Columns\n`;
       sqlContent += `-- This schema represents the current database structure\n\n`;
-      
+
       // Group columns by table
       const tableMap = new Map();
       (tablesResult.rows as any[]).forEach((row: any) => {
@@ -7171,30 +7295,30 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         }
         tableMap.get(row.table_name).push(row);
       });
-      
+
       // Generate CREATE TABLE statements
       tableMap.forEach((columns: any[], tableName: string) => {
         sqlContent += `\n-- Table: ${tableName}\n`;
         sqlContent += `CREATE TABLE IF NOT EXISTS "${tableName}" (\n`;
-        
+
         const columnDefs = columns.map((col: any) => {
           let dataType = col.data_type;
-          
+
           // Handle array types properly
           if (col.data_type === 'ARRAY') {
             // Extract the element type from udt_name (e.g., _text -> text[])
-            const elementType = col.udt_name.startsWith('_') 
-              ? col.udt_name.substring(1) 
+            const elementType = col.udt_name.startsWith('_')
+              ? col.udt_name.substring(1)
               : col.udt_name;
             dataType = `${elementType}[]`;
           } else if (col.data_type === 'USER-DEFINED') {
             // Use the actual type name for custom types
             dataType = col.udt_name;
           }
-          
+
           // Quote column name to handle reserved keywords (column, user, table, etc.)
           let def = `  "${col.column_name}" ${dataType}`;
-          
+
           if (col.character_maximum_length && !dataType.includes('[]')) {
             def += `(${col.character_maximum_length})`;
           }
@@ -7206,11 +7330,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           }
           return def;
         });
-        
+
         sqlContent += columnDefs.join(',\n');
         sqlContent += `\n);\n`;
       });
-      
+
       // Add constraints
       sqlContent += `\n-- Constraints\n`;
       const constraintMap = new Map();
@@ -7220,7 +7344,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           constraintMap.set(key, row);
         }
       });
-      
+
       constraintMap.forEach((constraint: any) => {
         if (constraint.constraint_type === 'PRIMARY KEY') {
           sqlContent += `-- PRIMARY KEY on ${constraint.table_name}(${constraint.column_name})\n`;
@@ -7230,7 +7354,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           sqlContent += `-- UNIQUE constraint on ${constraint.table_name}(${constraint.column_name})\n`;
         }
       });
-      
+
       // Set response headers for file download
       res.setHeader('Content-Type', 'text/plain');
       res.setHeader('Content-Disposition', `attachment; filename="database_schema_${timestamp}.sql"`);
@@ -7242,7 +7366,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // Employee Page Permissions API Routes
-  
+
   // Get all page permissions for all employees (Admin UI)
   app.get("/api/employee-page-permissions", isCEOOrAdmin, async (_req, res) => {
     try {
@@ -7258,13 +7382,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.get("/api/employee-page-permissions/:employeeId", isAuthenticated, async (req, res) => {
     try {
       const { employeeId } = req.params;
-      
+
       // Users can only fetch their own permissions unless they're CEO/Admin
       const userRole = req.user?.role?.toLowerCase();
       if (req.user?.id !== employeeId && userRole !== "ceo" && userRole !== "admin") {
         return res.status(403).json({ error: "Access denied" });
       }
-      
+
       const permissions = await storage.getEmployeePagePermissions(employeeId);
       res.json(permissions);
     } catch (error: any) {
@@ -7278,7 +7402,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { insertEmployeePagePermissionSchema } = await import("@shared/schema");
       const permissionData = insertEmployeePagePermissionSchema.parse(req.body);
-      
+
       const permission = await storage.setEmployeePagePermission(permissionData);
       res.json(permission);
     } catch (error: any) {
@@ -7291,11 +7415,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.delete("/api/employee-page-permissions", isCEOOrAdmin, async (req, res) => {
     try {
       const { employeeId, pagePath } = req.body;
-      
+
       if (!employeeId || !pagePath) {
         return res.status(400).json({ error: "employeeId and pagePath are required" });
       }
-      
+
       const success = await storage.removeEmployeePagePermission(employeeId, pagePath);
       if (success) {
         res.json({ success: true });
@@ -7312,11 +7436,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/employee-page-permissions/bulk", isCEOOrAdmin, async (req, res) => {
     try {
       const { permissions } = req.body;
-      
+
       if (!Array.isArray(permissions)) {
         return res.status(400).json({ error: "permissions must be an array" });
       }
-      
+
       // Set each permission
       const results = [];
       for (const perm of permissions) {
@@ -7327,7 +7451,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         });
         results.push(permission);
       }
-      
+
       res.json({ success: true, count: results.length });
     } catch (error: any) {
       console.error("Error bulk updating page permissions:", error);
@@ -7341,27 +7465,27 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const { systemSettings, insertSystemSettingsSchema } = await import("@shared/schema");
       const { encrypt } = await import("./utils/encryption");
       const settingsData = insertSystemSettingsSchema.partial().parse(req.body);
-      
+
       // Validate server settings if provided
       if (settingsData.serverHost !== undefined) {
         const host = settingsData.serverHost.trim();
         // Validate host format (IP address or hostname)
         const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
         const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-        
+
         if (host !== "0.0.0.0" && host !== "localhost" && !ipRegex.test(host) && !hostnameRegex.test(host)) {
           return res.status(400).json({ error: "Invalid server host format" });
         }
         settingsData.serverHost = host;
       }
-      
+
       if (settingsData.serverPort !== undefined) {
         const port = settingsData.serverPort;
         if (port < 1 || port > 65535) {
           return res.status(400).json({ error: "Port must be between 1 and 65535" });
         }
       }
-      
+
       // Encrypt MellaTech credentials if provided
       if (settingsData.mellatechUsername) {
         settingsData.mellatechUsername = encrypt(settingsData.mellatechUsername);
@@ -7369,13 +7493,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       if (settingsData.mellatechPassword) {
         settingsData.mellatechPassword = encrypt(settingsData.mellatechPassword);
       }
-      
+
       // Get current user ID from session
       const userId = (req.user as any)?.id;
-      
+
       // Check if settings exist
       const existing = await db.select().from(systemSettings).limit(1);
-      
+
       let updated;
       if (existing.length === 0) {
         // Create new settings
@@ -7397,7 +7521,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           .where(eq(systemSettings.id, existing[0].id))
           .returning();
       }
-      
+
       res.json(updated[0]);
     } catch (error: any) {
       console.error("Error updating system settings:", error);
@@ -7406,13 +7530,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   });
 
   // ==================== APP CUSTOMIZATIONS ROUTES ====================
-  
+
   // Get app customizations
   app.get("/api/app-customizations", async (_req, res) => {
     try {
       const { appCustomizations } = await import("@shared/schema");
       const customizations = await db.select().from(appCustomizations).limit(1);
-      
+
       if (customizations.length === 0) {
         // Return default customizations if none exist
         return res.json({
@@ -7422,7 +7546,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           themeMode: "light",
         });
       }
-      
+
       res.json(customizations[0]);
     } catch (error: any) {
       console.error("Error fetching app customizations:", error);
@@ -7435,13 +7559,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { appCustomizations, insertAppCustomizationsSchema } = await import("@shared/schema");
       const customizationData = insertAppCustomizationsSchema.partial().parse(req.body);
-      
+
       // Get current user ID from session
       const userId = (req.user as any)?.id;
-      
+
       // Check if customizations exist
       const existing = await db.select().from(appCustomizations).limit(1);
-      
+
       let updated;
       if (existing.length === 0) {
         // Create new customizations
@@ -7463,7 +7587,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           .where(eq(appCustomizations.id, existing[0].id))
           .returning();
       }
-      
+
       res.json(updated[0]);
     } catch (error: any) {
       console.error("Error updating app customizations:", error);
@@ -7482,14 +7606,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const fileExtension = file.originalname.substring(file.originalname.lastIndexOf('.'));
       const fileName = `logo-${nanoid()}${fileExtension}`;
       const uploadDir = join(process.cwd(), 'public', 'uploads');
-      
+
       // Ensure upload directory exists
       await mkdir(uploadDir, { recursive: true });
-      
+
       // Save file
       const filePath = join(uploadDir, fileName);
       await writeFile(filePath, file.buffer);
-      
+
       // Return the public URL path
       const publicPath = `/uploads/${fileName}`;
       res.json({ logoUrl: publicPath });
@@ -7504,14 +7628,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { workOrders, workshops, workOrderRequiredParts, spareParts, workOrderWorkshops } = await import("@shared/schema");
       const { sql: drizzleSql, and, gte, lte, between, eq, inArray } = await import("drizzle-orm");
-      
+
       // Parse query parameters
       const timePeriod = req.query.timePeriod as string || 'annual'; // daily, weekly, monthly, q1, q2, q3, q4, annual, custom
       const workshopId = req.query.workshopId as string | undefined; // Optional workshop filter
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
       const startDateParam = req.query.startDate as string | undefined;
       const endDateParam = req.query.endDate as string | undefined;
-      
+
       // Helper function to get current week start (Monday)
       const getCurrentWeekStart = () => {
         const now = new Date();
@@ -7520,12 +7644,12 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         const monday = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
         return monday;
       };
-      
+
       // Build date filter based on time period
       let dateFilter: any = {};
       const startOfYear = new Date(year, 0, 1);
       const endOfYear = new Date(year, 11, 31, 23, 59, 59);
-      
+
       if (timePeriod === 'custom' && startDateParam && endDateParam) {
         // Custom date range
         const customStart = new Date(startDateParam);
@@ -7570,10 +7694,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         // Annual
         dateFilter = { start: startOfYear, end: endOfYear };
       }
-      
+
       // Build filters array
       const filters: any[] = [];
-      
+
       // Workshop filtering using EXISTS subquery
       if (workshopId && workshopId !== 'all') {
         filters.push(
@@ -7584,23 +7708,23 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           )`
         );
       }
-      
+
       // Add date filter for completed work orders
       if (dateFilter.start && dateFilter.end) {
         filters.push(gte(workOrders.completedAt, dateFilter.start));
         filters.push(lte(workOrders.completedAt, dateFilter.end));
       }
-      
+
       // Fetch completed work orders with filters
       const completedOrders = await db.select().from(workOrders)
-        .where(filters.length > 0 
+        .where(filters.length > 0
           ? and(eq(workOrders.status, 'completed'), ...filters)
           : eq(workOrders.status, 'completed')
         );
-      
+
       // Fetch all work orders in the date range (for planned count)
       const allOrdersFilters: any[] = [];
-      
+
       // Workshop filtering for all orders
       if (workshopId && workshopId !== 'all') {
         allOrdersFilters.push(
@@ -7611,41 +7735,41 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           )`
         );
       }
-      
+
       if (dateFilter.start && dateFilter.end) {
         allOrdersFilters.push(gte(workOrders.createdAt, dateFilter.start));
         allOrdersFilters.push(lte(workOrders.createdAt, dateFilter.end));
       }
-      
+
       const allOrders = await db.select().from(workOrders)
         .where(allOrdersFilters.length > 0 ? and(...allOrdersFilters) : undefined);
-      
+
       // Fetch workshops data
       const workshopsData = await db.select().from(workshops);
-      
+
       // Calculate KPIs
       const totalPlanned = allOrders.length;
       const totalCompleted = completedOrders.length;
       const accomplishmentRate = totalPlanned > 0 ? (totalCompleted / totalPlanned) * 100 : 0;
-      
+
       // Calculate total costs
       let totalDirectCost = 0;
       let totalOvertimeCost = 0;
       let totalOutsourceCost = 0;
       let totalOverheadCost = 0;
       let totalCost = 0;
-      
+
       for (const order of completedOrders) {
         const directCost = parseFloat(order.directMaintenanceCost || '0');
         const overtimeCost = parseFloat(order.overtimeCost || '0');
         const outsourceCost = parseFloat(order.outsourceCost || '0');
         const overheadCost = parseFloat(order.overheadCost || '0');
-        
+
         totalDirectCost += directCost;
         totalOvertimeCost += overtimeCost;
         totalOutsourceCost += outsourceCost;
         totalOverheadCost += overheadCost;
-        
+
         // If no breakdown, use actualCost
         if (directCost === 0 && overtimeCost === 0 && outsourceCost === 0) {
           const actualCost = parseFloat(order.actualCost || '0');
@@ -7656,10 +7780,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           totalCost += directCost + overtimeCost + outsourceCost + overheadCost;
         }
       }
-      
+
       // Active workshops count
       const activeWorkshops = workshopsData.filter((w: any) => w.isActive).length;
-      
+
       // Calculate cost analytics using NEW cost tracking fields
       let totalPlannedLaborCost = 0;
       let totalActualLaborCost = 0;
@@ -7669,7 +7793,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       let totalActualOutsourceCost = 0;
       let totalPlannedCostNew = 0;
       let totalActualCostNew = 0;
-      
+
       for (const order of completedOrders) {
         const plannedLabor = parseFloat(order.plannedLaborCost || '0');
         const actualLabor = parseFloat(order.actualLaborCost || '0');
@@ -7679,7 +7803,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         const actualOutsource = parseFloat(order.actualOutsourceCost || '0');
         const totalPlanned = parseFloat(order.totalPlannedCost || '0');
         const totalActual = parseFloat(order.totalActualCost || '0');
-        
+
         totalPlannedLaborCost += plannedLabor;
         totalActualLaborCost += actualLabor;
         totalPlannedLubricantCost += plannedLubricant;
@@ -7689,13 +7813,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         totalPlannedCostNew += totalPlanned;
         totalActualCostNew += totalActual;
       }
-      
+
       // Calculate derived metrics
       const totalMaintenanceCost = totalActualLaborCost + totalActualLubricantCost + totalActualOutsourceCost;
       const avgCostPerWorkOrder = totalCompleted > 0 ? totalActualCostNew / totalCompleted : 0;
       const costVarianceAmount = totalActualCostNew - totalPlannedCostNew;
       const costVariancePct = totalPlannedCostNew > 0 ? (costVarianceAmount / totalPlannedCostNew) * 100 : 0;
-      
+
       // Task 8: Cost Charts Data - SQL aggregation with CTEs
       const { equipment, equipmentCategories, garages, workOrderGarages } = await import("@shared/schema");
       let costCharts: any = {
@@ -7704,13 +7828,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         byEquipmentType: [],
         byGarage: [],
       };
-      
+
       try {
         // Build workshop filter clause for SQL
         const workshopFilterSQL = workshopId && workshopId !== 'all'
           ? sql`AND EXISTS (SELECT 1 FROM work_order_workshops WHERE work_order_workshops.work_order_id = wo.id AND work_order_workshops.workshop_id = ${workshopId})`
           : sql``;
-        
+
         // Execute single SQL query with CTEs for all cost chart aggregations
         const costChartsQuery = sql`
           WITH monthly_series AS (
@@ -7798,7 +7922,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
               ), '[]'::json)
             ) AS cost_charts
         `;
-        
+
         const costChartsResult = await db.execute(costChartsQuery);
         if (costChartsResult.rows && costChartsResult.rows.length > 0) {
           costCharts = costChartsResult.rows[0].cost_charts || costCharts;
@@ -7807,7 +7931,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         console.error("Error calculating cost charts:", error);
         // Continue with default empty costCharts structure
       }
-      
+
       // Calculate quarterly data for the year (fiscal quarters based on Ethiopian calendar)
       const quarterlyData = [];
       const quarters = [
@@ -7816,10 +7940,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         { name: 'FY Q3', ...getFiscalQuarterRange(3, year) },
         { name: 'FY Q4', ...getFiscalQuarterRange(4, year) },
       ];
-      
+
       for (const quarter of quarters) {
         const qFilters: any[] = [];
-        
+
         // Workshop filtering for quarterly data
         if (workshopId && workshopId !== 'all') {
           qFilters.push(
@@ -7830,26 +7954,26 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             )`
           );
         }
-        
+
         qFilters.push(gte(workOrders.createdAt, quarter.start));
         qFilters.push(lte(workOrders.createdAt, quarter.end));
-        
+
         const qAllOrders = await db.select().from(workOrders)
           .where(and(...qFilters));
-        
+
         const qCompletedOrders = qAllOrders.filter((o: any) => o.status === 'completed');
-        
+
         let qDirectCost = 0;
         let qOvertimeCost = 0;
         let qOutsourceCost = 0;
         let qOverheadCost = 0;
-        
+
         for (const order of qCompletedOrders) {
           const directCost = parseFloat(order.directMaintenanceCost || '0');
           const overtimeCost = parseFloat(order.overtimeCost || '0');
           const outsourceCost = parseFloat(order.outsourceCost || '0');
           const overheadCost = parseFloat(order.overheadCost || '0');
-          
+
           if (directCost === 0 && overtimeCost === 0 && outsourceCost === 0) {
             const actualCost = parseFloat(order.actualCost || '0');
             qDirectCost += actualCost * 0.7;
@@ -7861,10 +7985,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             qOverheadCost += overheadCost;
           }
         }
-        
+
         const qTotalCost = qDirectCost + qOvertimeCost + qOutsourceCost + qOverheadCost;
         const qAccomplishment = qAllOrders.length > 0 ? (qCompletedOrders.length / qAllOrders.length) * 100 : 0;
-        
+
         quarterlyData.push({
           quarter: quarter.name,
           planned: qAllOrders.length,
@@ -7877,7 +8001,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           overhead: parseFloat(qOverheadCost.toFixed(2)),
         });
       }
-      
+
       // Build workshop→order mapping once (efficient approach per architect guidance)
       // This handles multi-workshop assignments: each workshop gets full metrics for all assigned orders
       const allWorkOrderIds = allOrders.map((o: any) => o.id);
@@ -7888,7 +8012,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         })
         .from(workOrderWorkshops)
         .where(inArray(workOrderWorkshops.workOrderId, allWorkOrderIds));
-      
+
       // Build Map<workshopId, Set<workOrderId>> for efficient lookups
       const workshopToOrdersMap = new Map<string, Set<string>>();
       for (const mapping of workshopOrderMappings) {
@@ -7897,42 +8021,42 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         }
         workshopToOrdersMap.get(mapping.workshopId)!.add(mapping.workOrderId);
       }
-      
+
       // Calculate workshop/department performance
       const workshopPerformance = [];
       for (const workshop of workshopsData) {
         if (!workshop.isActive) continue;
-        
+
         // Get work orders for this workshop using pre-built mapping
         const workshopWorkOrderIds = workshopToOrdersMap.get(workshop.id) || new Set();
         const workshopOrders = allOrders.filter((o: any) => workshopWorkOrderIds.has(o.id));
         const workshopCompleted = completedOrders.filter((o: any) => workshopWorkOrderIds.has(o.id));
-        
+
         // Calculate quarterly accomplishment for this workshop
         const q1Orders = workshopOrders.filter((o: any) => {
           const created = new Date(o.createdAt);
           return created >= quarters[0].start && created <= quarters[0].end;
         });
         const q1Completed = q1Orders.filter((o: any) => o.status === 'completed');
-        
+
         const q2Orders = workshopOrders.filter((o: any) => {
           const created = new Date(o.createdAt);
           return created >= quarters[1].start && created <= quarters[1].end;
         });
         const q2Completed = q2Orders.filter((o: any) => o.status === 'completed');
-        
+
         const q3Orders = workshopOrders.filter((o: any) => {
           const created = new Date(o.createdAt);
           return created >= quarters[2].start && created <= quarters[2].end;
         });
         const q3Completed = q3Orders.filter((o: any) => o.status === 'completed');
-        
+
         const q4Orders = workshopOrders.filter((o: any) => {
           const created = new Date(o.createdAt);
           return created >= quarters[3].start && created <= quarters[3].end;
         });
         const q4Completed = q4Orders.filter((o: any) => o.status === 'completed');
-        
+
         // Calculate average cost for this workshop
         let workshopTotalCost = 0;
         for (const order of workshopCompleted) {
@@ -7940,7 +8064,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           const overtimeCost = parseFloat(order.overtimeCost || '0');
           const outsourceCost = parseFloat(order.outsourceCost || '0');
           const overheadCost = parseFloat(order.overheadCost || '0');
-          
+
           if (directCost === 0 && overtimeCost === 0 && outsourceCost === 0) {
             const actualCost = parseFloat(order.actualCost || '0');
             workshopTotalCost += actualCost;
@@ -7948,9 +8072,9 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             workshopTotalCost += directCost + overtimeCost + outsourceCost + overheadCost;
           }
         }
-        
+
         const avgCost = workshopCompleted.length > 0 ? workshopTotalCost / workshopCompleted.length : 0;
-        
+
         workshopPerformance.push({
           name: workshop.name,
           q1: q1Orders.length > 0 ? parseFloat(((q1Completed.length / q1Orders.length) * 100).toFixed(2)) : 0,
@@ -7961,7 +8085,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           totalCost: parseFloat(workshopTotalCost.toFixed(2)),
         });
       }
-      
+
       // Return analytics data
       res.json({
         kpis: {
@@ -8015,11 +8139,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const { calculateWorkOrderElapsedTime } = await import("./work-timer-utils");
       const { workOrders, workOrderMemberships, workOrderTimeTracking, employees } = await import("@shared/schema");
       const { eq, and, gte, lte, inArray } = await import("drizzle-orm");
-      
+
       const today = new Date();
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0);
       const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
-      
+
       const performance = await calculateEmployeePerformance(startOfDay, endOfDay);
       res.json(performance);
     } catch (error: any) {
@@ -8033,7 +8157,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const today = new Date();
       const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0);
       const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
-      
+
       const performance = await calculateEmployeePerformance(startOfMonth, endOfMonth);
       res.json(performance);
     } catch (error: any) {
@@ -8047,7 +8171,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       const today = new Date();
       const startOfYear = new Date(today.getFullYear(), 0, 1, 0, 0, 0);
       const endOfYear = new Date(today.getFullYear(), 11, 31, 23, 59, 59);
-      
+
       const performance = await calculateEmployeePerformance(startOfYear, endOfYear);
       res.json(performance);
     } catch (error: any) {
@@ -8061,7 +8185,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { systemSettings } = await import("@shared/schema");
       let configured = false;
-      
+
       // Priority 1: Check for API key in environment
       if (process.env.MELLATECH_API_KEY) {
         configured = true;
@@ -8075,7 +8199,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           configured = true;
         }
       }
-      
+
       res.json({ configured });
     } catch (error: any) {
       console.error("Error checking MellaTech status:", error);
@@ -8099,9 +8223,9 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { getMellaTechService } = await import("./services/mellatech");
       const mellaTech = await getMellaTechService();
-      
+
       const vehicles = await mellaTech.getVehicles();
-      
+
       const vehiclesData = vehicles.map(v => ({
         mellaTechId: v.id,
         id: v.id,
@@ -8117,13 +8241,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         status: v.status,
         lastUpdate: v.lastUpdate,
       }));
-      
+
       await storage.syncMellaTechVehicles(vehiclesData);
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: `Synced ${vehicles.length} vehicles`,
-        count: vehicles.length 
+        count: vehicles.length
       });
     } catch (error: any) {
       console.error("Error syncing MellaTech vehicles:", error);
@@ -8170,13 +8294,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/mellatech/vehicles/:id/link-equipment", isCEOOrAdmin, async (req, res) => {
     try {
       const { equipmentId } = req.body;
-      
+
       if (!equipmentId) {
         return res.status(400).json({ error: "Equipment ID is required" });
       }
-      
+
       await storage.linkMellaTechVehicleToEquipment(req.params.id, equipmentId);
-      
+
       res.json({ success: true, message: "Vehicle linked to equipment" });
     } catch (error: any) {
       console.error("Error linking vehicle to equipment:", error);
@@ -8187,12 +8311,12 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.get("/api/mellatech/alerts", isAuthenticated, async (req, res) => {
     try {
       const { unreadOnly, limit } = req.query;
-      
+
       const alerts = await storage.getMellaTechAlerts({
         unreadOnly: unreadOnly === 'true',
         limit: limit ? parseInt(limit as string) : undefined,
       });
-      
+
       res.json(alerts);
     } catch (error: any) {
       console.error("Error fetching MellaTech alerts:", error);
@@ -8219,10 +8343,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { getEthiopianYearInfo } = await import("./ethiopian-calendar");
       const yearInfo = getEthiopianYearInfo();
-      
+
       // Get current settings
       const settings = await storage.getSystemSettings();
-      
+
       res.json({
         ...yearInfo,
         activeYear: settings?.activeEthiopianYear,
@@ -8243,9 +8367,9 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       }
 
       const { notes } = req.body;
-      
+
       const closureLog = await storage.closeEthiopianYear(req.user.id, notes);
-      
+
       res.json({
         success: true,
         message: "Year closed successfully",
@@ -8273,7 +8397,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     try {
       const { ethiopianYear } = req.query;
       const year = ethiopianYear ? parseInt(ethiopianYear as string) : undefined;
-      
+
       const archivedOrders = await storage.getArchivedWorkOrders(year);
       res.json(archivedOrders);
     } catch (error: any) {
@@ -8286,13 +8410,13 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/planning-targets/lock", isCEOOrAdmin, async (req, res) => {
     try {
       const { locked } = req.body;
-      
+
       if (typeof locked !== 'boolean') {
         return res.status(400).json({ error: "Invalid lock status" });
       }
-      
+
       await storage.updatePlanningTargetsLockStatus(locked);
-      
+
       res.json({
         success: true,
         message: locked ? "Planning targets locked" : "Planning targets unlocked",
@@ -8313,10 +8437,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
       const { seedSampleData } = await import("./seed-sample-data");
       await seedSampleData();
-      
-      res.json({ 
-        success: true, 
-        message: "Sample data seeded successfully! Check the database for new work orders, requisitions, inspections, and archived data." 
+
+      res.json({
+        success: true,
+        message: "Sample data seeded successfully! Check the database for new work orders, requisitions, inspections, and archived data."
       });
     } catch (error: any) {
       console.error("Error seeding sample data:", error);
@@ -8329,7 +8453,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   app.post("/api/admin/sync-schema", isCEOOrAdmin, async (req, res) => {
     try {
       const { spawn } = await import('child_process');
-      
+
       // Use db:push --force as recommended by the system
       // This safely syncs the schema without manual migrations
       // The --force flag bypasses interactive prompts in development
@@ -8338,31 +8462,31 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         shell: true,
         env: { ...process.env, FORCE_COLOR: '0' }
       });
-      
+
       let pushOutput = '';
       let pushError = '';
-      
+
       pushProcess.stdout.on('data', (data) => {
         const text = data.toString();
         pushOutput += text;
         console.log('[Schema Sync]', text);
       });
-      
+
       pushProcess.stderr.on('data', (data) => {
         const text = data.toString();
         pushError += text;
         console.error('[Schema Sync]', text);
       });
-      
+
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           pushProcess.kill();
           reject(new Error('Schema sync timed out after 60 seconds'));
         }, 60000);
-        
+
         pushProcess.on('close', (code) => {
           clearTimeout(timeout);
-          
+
           if (code === 0) {
             resolve();
           } else {
@@ -8371,23 +8495,23 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           }
         });
       });
-      
-      res.json({ 
-        success: true, 
+
+      res.json({
+        success: true,
         message: 'Database schema synced successfully',
         output: pushOutput,
         info: 'Schema has been updated to match your code. Review the changes above.'
       });
     } catch (error: any) {
       console.error('Schema sync error:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         message: error.message || 'Failed to sync database schema',
         error: error.message
       });
     }
   });
-  
+
   // Get database schema info (tables and column counts)
   app.get("/api/admin/schema-info", isCEOOrAdmin, async (req, res) => {
     try {
@@ -8401,157 +8525,153 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         AND table_type = 'BASE TABLE'
         ORDER BY table_name
       `);
-      
+
       res.json({
         success: true,
         tables: tablesQuery.rows
       });
     } catch (error: any) {
       console.error('Schema info error:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         message: 'Failed to fetch schema info',
-        error: error.message 
+        error: error.message
       });
     }
   });
 
-  const httpServer = createServer(app);
+  // Helper function to calculate employee performance
+  async function calculateEmployeePerformance(startDate: Date, endDate: Date) {
+    const { db } = await import("./db");
 
-  return httpServer;
-}
+    // Get all completed work orders in the time period
+    const completedWorkOrders = await db
+      .select()
+      .from(workOrders)
+      .where(
+        and(
+          eq(workOrders.status, "completed"),
+          gte(workOrders.completedAt, startDate),
+          lte(workOrders.completedAt, endDate)
+        )
+      );
 
-// Helper function to calculate employee performance
-async function calculateEmployeePerformance(startDate: Date, endDate: Date) {
-  const { calculateWorkOrderElapsedTime } = await import("./work-timer-utils");
-  const { workOrders, workOrderMemberships, workOrderTimeTracking, employees } = await import("@shared/schema");
-  const { eq, and, gte, lte, inArray, or } = await import("drizzle-orm");
-  const { db } = await import("./db");
-  
-  // Get all completed work orders in the time period
-  const completedWorkOrders = await db
-    .select()
-    .from(workOrders)
-    .where(
-      and(
-        eq(workOrders.status, "completed"),
-        gte(workOrders.completedAt, startDate),
-        lte(workOrders.completedAt, endDate)
-      )
-    );
-  
-  if (completedWorkOrders.length === 0) {
-    return [];
-  }
-  
-  const workOrderIds = completedWorkOrders.map((wo: any) => wo.id);
-  
-  // Get all team member assignments for these work orders
-  const memberships = await db
-    .select()
-    .from(workOrderMemberships)
-    .where(
-      and(
-        inArray(workOrderMemberships.workOrderId, workOrderIds),
-        eq(workOrderMemberships.role, "team_member"),
-        eq(workOrderMemberships.isActive, true)
-      )
-    );
-  
-  if (memberships.length === 0) {
-    return [];
-  }
-  
-  // Get all time tracking records for these work orders
-  const timeRecords = await db
-    .select()
-    .from(workOrderTimeTracking)
-    .where(inArray(workOrderTimeTracking.workOrderId, workOrderIds));
-  
-  // Group time records by work order
-  const timeRecordsByWorkOrder = timeRecords.reduce((acc: any, record: any) => {
-    if (!acc[record.workOrderId]) {
-      acc[record.workOrderId] = [];
+    if (completedWorkOrders.length === 0) {
+      return [];
     }
-    acc[record.workOrderId].push(record);
-    return acc;
-  }, {});
-  
-  // Calculate performance for each employee
-  const employeeStats: Record<string, {
-    workOrdersCompleted: number;
-    totalElapsedHours: number;
-    employeeId: string;
-  }> = {};
-  
-  memberships.forEach((membership: any) => {
-    if (!employeeStats[membership.employeeId]) {
-      employeeStats[membership.employeeId] = {
-        workOrdersCompleted: 0,
-        totalElapsedHours: 0,
-        employeeId: membership.employeeId,
+
+    const workOrderIds = completedWorkOrders.map((wo: any) => wo.id);
+
+    // Get all team member assignments for these work orders
+    const memberships = await db
+      .select()
+      .from(workOrderMemberships)
+      .where(
+        and(
+          inArray(workOrderMemberships.workOrderId, workOrderIds),
+          eq(workOrderMemberships.role, "team_member"),
+          eq(workOrderMemberships.isActive, true)
+        )
+      );
+
+    if (memberships.length === 0) {
+      return [];
+    }
+
+    // Get all time tracking records for these work orders
+    const timeRecords = await db
+      .select()
+      .from(workOrderTimeTracking)
+      .where(inArray(workOrderTimeTracking.workOrderId, workOrderIds));
+
+    // Group time records by work order
+    const timeRecordsByWorkOrder = timeRecords.reduce((acc: any, record: any) => {
+      if (!acc[record.workOrderId]) {
+        acc[record.workOrderId] = [];
+      }
+      acc[record.workOrderId].push(record);
+      return acc;
+    }, {});
+
+    // Calculate performance for each employee
+    const employeeStats: Record<string, {
+      workOrdersCompleted: number;
+      totalElapsedHours: number;
+      employeeId: string;
+    }> = {};
+
+    memberships.forEach((membership: any) => {
+      if (!employeeStats[membership.employeeId]) {
+        employeeStats[membership.employeeId] = {
+          workOrdersCompleted: 0,
+          totalElapsedHours: 0,
+          employeeId: membership.employeeId,
+        };
+      }
+
+      const workOrder = completedWorkOrders.find((wo: any) => wo.id === membership.workOrderId);
+      if (!workOrder) return;
+
+      employeeStats[membership.employeeId].workOrdersCompleted += 1;
+
+      // Calculate elapsed time for this work order
+      const timeTrackingData = timeRecordsByWorkOrder[membership.workOrderId] || [];
+      const timerResult = calculateWorkOrderElapsedTime(
+        workOrder.startedAt,
+        workOrder.completedAt,
+        workOrder.status,
+        timeTrackingData
+      );
+
+      employeeStats[membership.employeeId].totalElapsedHours += timerResult.elapsedHours;
+    });
+
+    // Get employee details
+    const employeeIds = Object.keys(employeeStats);
+    const employeeDetails = await db
+      .select()
+      .from(employees)
+      .where(inArray(employees.id, employeeIds));
+
+    // Calculate performance scores and create result array
+    const performance = employeeDetails.map((employee: any) => {
+      const stats = employeeStats[employee.id];
+      const avgCompletionTime = stats.workOrdersCompleted > 0
+        ? stats.totalElapsedHours / stats.workOrdersCompleted
+        : 0;
+
+      // Performance score formula:
+      // Higher score for more completed work orders
+      // Higher score for faster completion times
+      // Formula: (workOrders * 100) / (avgTime + 1)
+      // The +1 prevents division by zero and gives weight to completion
+      const performanceScore = Math.round(
+        (stats.workOrdersCompleted * 100) / (avgCompletionTime + 1)
+      );
+
+      return {
+        employeeId: employee.id,
+        fullName: employee.fullName,
+        role: employee.role,
+        tasksCompleted: 0, // Not tracked currently
+        workOrdersCompleted: stats.workOrdersCompleted,
+        totalLaborHours: parseFloat(stats.totalElapsedHours.toFixed(2)),
+        avgCompletionTime: parseFloat(avgCompletionTime.toFixed(2)),
+        requisitionsProcessed: 0, // Not tracked currently
+        performanceScore: performanceScore,
+        rank: 0, // Will be set below
       };
-    }
-    
-    const workOrder = completedWorkOrders.find((wo: any) => wo.id === membership.workOrderId);
-    if (!workOrder) return;
-    
-    employeeStats[membership.employeeId].workOrdersCompleted += 1;
-    
-    // Calculate elapsed time for this work order
-    const timeTrackingData = timeRecordsByWorkOrder[membership.workOrderId] || [];
-    const timerResult = calculateWorkOrderElapsedTime(
-      workOrder.startedAt,
-      workOrder.completedAt,
-      workOrder.status,
-      timeTrackingData
-    );
-    
-    employeeStats[membership.employeeId].totalElapsedHours += timerResult.elapsedHours;
-  });
-  
-  // Get employee details
-  const employeeIds = Object.keys(employeeStats);
-  const employeeDetails = await db
-    .select()
-    .from(employees)
-    .where(inArray(employees.id, employeeIds));
-  
-  // Calculate performance scores and create result array
-  const performance = employeeDetails.map((employee: any) => {
-    const stats = employeeStats[employee.id];
-    const avgCompletionTime = stats.workOrdersCompleted > 0
-      ? stats.totalElapsedHours / stats.workOrdersCompleted
-      : 0;
-    
-    // Performance score formula:
-    // Higher score for more completed work orders
-    // Higher score for faster completion times
-    // Formula: (workOrders * 100) / (avgTime + 1)
-    // The +1 prevents division by zero and gives weight to completion
-    const performanceScore = Math.round(
-      (stats.workOrdersCompleted * 100) / (avgCompletionTime + 1)
-    );
-    
-    return {
-      employeeId: employee.id,
-      fullName: employee.fullName,
-      role: employee.role,
-      tasksCompleted: 0, // Not tracked currently
-      workOrdersCompleted: stats.workOrdersCompleted,
-      totalLaborHours: parseFloat(stats.totalElapsedHours.toFixed(2)),
-      avgCompletionTime: parseFloat(avgCompletionTime.toFixed(2)),
-      requisitionsProcessed: 0, // Not tracked currently
-      performanceScore: performanceScore,
-      rank: 0, // Will be set below
-    };
-  });
-  
-  // Sort by performance score (descending) and assign ranks
-  performance.sort((a: any, b: any) => b.performanceScore - a.performanceScore);
-  performance.forEach((emp: any, index: number) => {
-    emp.rank = index + 1;
-  });
-  
-  return performance;
+    });
+
+    // Sort by performance score (descending) and assign ranks
+    performance.sort((a: any, b: any) => b.performanceScore - a.performanceScore);
+    performance.forEach((emp: any, index: number) => {
+      emp.rank = index + 1;
+    });
+
+    return performance;
+  }
+
+  const httpServer = createServer(app);
+  return httpServer;
 }

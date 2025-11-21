@@ -24,7 +24,7 @@ export const equipment = pgTable("equipment", {
   assetNo: text("asset_no"),
   newAssetNo: text("new_asset_no"),
   machineSerial: text("machine_serial"),
-  plantNumber: text("plant_number"), // Plant/site number where equipment is assigned
+  engineNumber: text("engine_number"), // Engine-specific serial/number
   projectArea: text("project_area"), // Project area where equipment operates
   assignedDriverId: varchar("assigned_driver_id").references(() => employees.id, { onDelete: "set null" }), // Driver assigned to this equipment
   price: decimal("price", { precision: 12, scale: 2 }), // Equipment price in USD
@@ -35,6 +35,7 @@ export const equipment = pgTable("equipment", {
 // Spare parts catalog
 export const spareParts = pgTable("spare_parts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  manualId: text("manual_id").unique(), // Manually-entered custom identifier (optional)
   partNumber: text("part_number").notNull().unique(),
   partName: text("part_name").notNull(),
   description: text("description"),
@@ -376,32 +377,32 @@ export const workOrders = pgTable("work_orders", {
   description: text("description").notNull(),
   status: text("status").notNull().default("pending_allocation"), // pending_allocation, pending_foreman_assignment, pending_team_acceptance, active, awaiting_parts, waiting_purchase, in_progress, pending_verification, pending_supervisor, completed, rejected, cancelled
   actualHours: decimal("actual_hours", { precision: 5, scale: 2 }),
-  
+
   // DEPRECATED cost fields (kept for backward compatibility - read-only)
   actualCost: decimal("actual_cost", { precision: 12, scale: 2 }), // DEPRECATED: Use totalActualCost instead
   directMaintenanceCost: decimal("direct_maintenance_cost", { precision: 12, scale: 2 }), // DEPRECATED: Use actualLaborCost instead
   overtimeCost: decimal("overtime_cost", { precision: 12, scale: 2 }), // DEPRECATED: Included in actualLaborCost
   outsourceCost: decimal("outsource_cost", { precision: 12, scale: 2 }), // DEPRECATED: Use actualOutsourceCost instead
   overheadCost: decimal("overhead_cost", { precision: 12, scale: 2 }), // DEPRECATED: Use actualOverheadCost instead
-  
+
   // NEW comprehensive cost tracking system
   // Planned costs (entered during work order creation/approval)
   plannedLaborCost: decimal("planned_labor_cost", { precision: 12, scale: 2 }),
   plannedLubricantCost: decimal("planned_lubricant_cost", { precision: 12, scale: 2 }),
   plannedOutsourceCost: decimal("planned_outsource_cost", { precision: 12, scale: 2 }),
   totalPlannedCost: decimal("total_planned_cost", { precision: 12, scale: 2 }), // Sum of all planned costs
-  
+
   // Actual costs (auto-calculated from itemized entries)
   actualLaborCost: decimal("actual_labor_cost", { precision: 12, scale: 2 }), // Calculated from labor entries
   actualLubricantCost: decimal("actual_lubricant_cost", { precision: 12, scale: 2 }), // Calculated from lubricant entries
   actualOutsourceCost: decimal("actual_outsource_cost", { precision: 12, scale: 2 }), // Calculated from outsource entries
   actualOverheadCost: decimal("actual_overhead_cost", { precision: 12, scale: 2 }), // Auto-calculated as % of labor
   totalActualCost: decimal("total_actual_cost", { precision: 12, scale: 2 }), // Sum of all actual costs
-  
+
   // Cost variance tracking
   costVariance: decimal("cost_variance", { precision: 12, scale: 2 }), // totalActualCost - totalPlannedCost
   costVariancePercent: decimal("cost_variance_percent", { precision: 5, scale: 2 }), // Percentage variance
-  
+
   isOutsourced: boolean("is_outsourced").default(false), // Flag for outsourced work
   approvalStatus: text("approval_status").default("not_required"), // not_required, pending, approved, rejected
   approvedById: varchar("approved_by_id").references(() => employees.id), // Supervisor who approved
@@ -618,14 +619,14 @@ export const itemRequisitionLines = pgTable("item_requisition_lines", {
   quantityApproved: integer("quantity_approved"), // Quantity approved by foreman/store
   status: text("status").notNull().default("pending"), // pending, approved, rejected, backordered, fulfilled
   remarks: text("remarks"), // Additional notes (አስተያየት)
-  
+
   // Foreman approval fields - per-line approval/rejection
   foremanReviewerId: varchar("foreman_reviewer_id").references(() => employees.id), // Foreman who reviewed this line
   foremanDecisionAt: timestamp("foreman_decision_at"), // When foreman made decision
   foremanDecisionRemarks: text("foreman_decision_remarks"), // Foreman's notes on decision
   foremanApprovedQty: integer("foreman_approved_qty"), // Quantity approved by foreman (can differ from requested)
   foremanStatus: text("foreman_status").default("pending"), // pending, approved, rejected
-  
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => ({
   // Ensure unique line numbers within each requisition
@@ -637,30 +638,30 @@ export const purchaseRequests = pgTable("purchase_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   purchaseRequestNumber: text("purchase_request_number").notNull().unique(), // PO-2025-001
   requisitionLineId: varchar("requisition_line_id").notNull().references(() => itemRequisitionLines.id, { onDelete: "cascade" }),
-  
+
   // Employee references
   requestedById: varchar("requested_by_id").notNull().references(() => employees.id), // Original requester (team member)
   foremanApprovedById: varchar("foreman_approved_by_id").references(() => employees.id), // Foreman who approved requisition
   storeManagerId: varchar("store_manager_id").notNull().references(() => employees.id), // Store manager who prepared purchase request
-  
+
   quantityRequested: integer("quantity_requested").notNull(), // Quantity to be purchased
   quantityReceived: integer("quantity_received").default(0), // Quantity actually received
   status: text("status").notNull().default("pending"), // pending, ordered, received, cancelled
-  
+
   // Dates
   dateRequested: timestamp("date_requested").notNull(), // Date when item requester asked for the item (from requisition)
   dateApproved: timestamp("date_approved").notNull(), // Date when store manager approved for purchase (current date)
   orderDate: timestamp("order_date"), // When order was actually placed with vendor
   receivedDate: timestamp("received_date"), // When items were received
-  
+
   // Pricing (optional - can be filled later)
   unitPrice: text("unit_price"), // Store as text to avoid precision issues
   totalPrice: text("total_price"),
   currency: text("currency").default("ETB"), // ETB or USD
-  
+
   // Notes
   notes: text("notes"),
-  
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -833,12 +834,12 @@ export const equipmentReceptions = pgTable("equipment_receptions", {
   issuesReported: text("issues_reported"), // Driver's reported problems
   driverId: varchar("driver_id").notNull().references(() => employees.id), // Driver who dropped off equipment
   driverSignature: text("driver_signature"), // Base64 or URL to signature image
-  
+
   // Admin processing fields
   serviceType: text("service_type"), // "long_term", "short_term"
   adminIssuesReported: text("admin_issues_reported"), // Issues reported by Administration Officer
   inspectionOfficerId: varchar("inspection_officer_id").references(() => employees.id), // Assigned inspection officer
-  
+
   mechanicId: varchar("mechanic_id").references(() => employees.id),
   status: text("status").notNull().default("driver_submitted"), // driver_submitted, awaiting_mechanic, under_inspection, inspection_complete, work_order_created, closed
   workOrderId: varchar("work_order_id").references(() => workOrders.id),

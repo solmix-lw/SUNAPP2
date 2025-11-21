@@ -30,22 +30,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { 
-  insertEquipmentSchema, 
+import {
+  insertEquipmentSchema,
   insertEquipmentCategorySchema,
-  type Equipment, 
+  type Equipment,
   type InsertEquipment,
   type EquipmentCategory,
   type InsertEquipmentCategory,
-  type Employee 
+  type Employee
 } from "@shared/schema";
-import type { 
-  MaintenanceRecordWithDetails, 
+import type {
+  MaintenanceRecordWithDetails,
   OperatingBehaviorReport,
   PartsUsageHistory,
-  SparePart 
+  SparePart
 } from "@shared/schema";
 import * as XLSX from "xlsx";
+import { ImportPreviewDialog } from "@/components/ImportPreviewDialog";
 
 interface EquipmentGroup {
   equipmentType: string;
@@ -59,7 +60,7 @@ export default function EquipmentPage() {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterMake, setFilterMake] = useState<string>("all");
   const [selectedEquipment, setSelectedEquipment] = useState<Equipment | null>(null);
-  
+
   // CRUD dialogs state
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
@@ -67,19 +68,21 @@ export default function EquipmentPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<string | null>(null);
   const [deleteUnitsInCategoryConfirm, setDeleteUnitsInCategoryConfirm] = useState<string | null>(null);
-  
+
   // Driver selection state
   const [driverDialogOpen, setDriverDialogOpen] = useState(false);
   const [driverSearchTerm, setDriverSearchTerm] = useState("");
   const [selectedDriver, setSelectedDriver] = useState<Employee | null>(null);
-  
+
   // Import/Export state
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<InsertEquipment[]>([]);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
 
   // D365 import state
-  
+
   // Form state for equipment
   const [formData, setFormData] = useState<InsertEquipment>({
     categoryId: null,
@@ -90,9 +93,10 @@ export default function EquipmentPage() {
     assetNo: "",
     newAssetNo: "",
     machineSerial: "",
-    plantNumber: "",
+    engineNumber: "",
     projectArea: "",
     assignedDriverId: null,
+    price: null,
     remarks: "",
   });
 
@@ -137,7 +141,7 @@ export default function EquipmentPage() {
     const existing = groupedEquipment.find(
       (g) => g.equipmentType === item.equipmentType
     );
-    
+
     if (existing) {
       existing.units.push(item);
       existing.count++;
@@ -153,8 +157,8 @@ export default function EquipmentPage() {
   // Sort groups by equipment type alphabetically
   groupedEquipment.sort((a, b) => a.equipmentType.localeCompare(b.equipmentType));
 
-  const equipmentTypes = Array.from(new Set(equipment?.map((e) => e.equipmentType) || []));
-  const makes = Array.from(new Set(equipment?.map((e) => e.make) || []));
+  const equipmentTypes = Array.from(new Set(equipment?.map((e) => e.equipmentType).filter(Boolean) || []));
+  const makes = Array.from(new Set(equipment?.map((e) => e.make).filter(Boolean) || []));
 
   // Mutations
   const createEquipmentMutation = useMutation({
@@ -258,41 +262,7 @@ export default function EquipmentPage() {
     },
   });
 
-  const importExcelMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const res = await fetch('/api/equipment/import', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Import failed');
-      }
-      
-      return res.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/equipment"] });
-      toast({
-        title: "Import Completed",
-        description: `Created: ${data.results.created}, Updated: ${data.results.updated}, Skipped: ${data.results.skipped}`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Import Failed",
-        description: error.message || "Failed to import equipment",
-        variant: "destructive",
-      });
-    },
-  });
+
 
   const handleDownloadTemplate = async () => {
     try {
@@ -307,45 +277,45 @@ export default function EquipmentPage() {
       }
 
       console.log('Starting equipment template download...');
-      
+
       const res = await fetch('/api/equipment/template', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
-      
+
       if (!res.ok) {
         const errorText = await res.text();
         throw new Error(errorText || 'Failed to download template');
       }
-      
+
       console.log('Template received, creating blob...');
       const blob = await res.blob();
       console.log('Blob created, size:', blob.size);
-      
-      const url = window.URL.createObjectURL(new Blob([blob], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+
+      const url = window.URL.createObjectURL(new Blob([blob], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       }));
-      
+
       const link = document.createElement('a');
       link.href = url;
       link.download = 'equipment_template.xlsx';
       link.setAttribute('download', 'equipment_template.xlsx');
-      
+
       document.body.appendChild(link);
-      
+
       setTimeout(() => {
         console.log('Triggering download click...');
         link.click();
         console.log('Download triggered');
-        
+
         setTimeout(() => {
           document.body.removeChild(link);
           window.URL.revokeObjectURL(url);
         }, 250);
       }, 50);
-      
+
       toast({
         title: "Template Ready",
         description: "Check your Downloads folder for equipment_template.xlsx. In some browsers, you may need to allow downloads from this site.",
@@ -362,13 +332,7 @@ export default function EquipmentPage() {
     }
   };
 
-  const handleExcelFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      importExcelMutation.mutate(file);
-    }
-    event.target.value = "";
-  };
+
 
   const importEquipmentMutation = useMutation({
     mutationFn: async (equipmentList: InsertEquipment[]) => {
@@ -427,7 +391,7 @@ export default function EquipmentPage() {
       assetNo: "",
       newAssetNo: "",
       machineSerial: "",
-      plantNumber: "",
+      engineNumber: "",
       projectArea: "",
       assignedDriverId: null,
       price: null,
@@ -455,7 +419,7 @@ export default function EquipmentPage() {
   const handleEdit = (equip: Equipment) => {
     // If equipment has a category, use it; otherwise use equipmentType as a "type:" value
     const categoryValue = equip.categoryId || `type:${equip.equipmentType}`;
-    
+
     setFormData({
       categoryId: categoryValue,
       equipmentType: equip.equipmentType,
@@ -465,12 +429,13 @@ export default function EquipmentPage() {
       assetNo: equip.assetNo || "",
       newAssetNo: equip.newAssetNo || "",
       machineSerial: equip.machineSerial || "",
-      plantNumber: equip.plantNumber || "",
+      engineNumber: equip.engineNumber || "",
       projectArea: equip.projectArea || "",
       assignedDriverId: equip.assignedDriverId || null,
+      price: (equip.price as string | null) || null,
       remarks: equip.remarks || "",
     });
-    
+
     // Find and set the assigned driver
     if (equip.assignedDriverId && employees) {
       const driver = employees.find(emp => emp.id === equip.assignedDriverId);
@@ -478,7 +443,7 @@ export default function EquipmentPage() {
     } else {
       setSelectedDriver(null);
     }
-    
+
     setEditingEquipment(equip);
     setIsCreateDialogOpen(true);
   };
@@ -499,10 +464,10 @@ export default function EquipmentPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Process the category selection
     const processedData = { ...formData };
-    
+
     // If categoryId starts with "type:", it's an equipment type, not a category
     if (processedData.categoryId?.startsWith("type:")) {
       const equipmentType = processedData.categoryId.replace("type:", "");
@@ -515,7 +480,7 @@ export default function EquipmentPage() {
         processedData.equipmentType = selectedCategory.name;
       }
     }
-    
+
     createEquipmentMutation.mutate(processedData);
   };
 
@@ -533,13 +498,16 @@ export default function EquipmentPage() {
   const downloadTemplate = () => {
     const template = [
       {
-        "Equipment Type": "DOZER",
-        "Make": "CAT",
-        "Model": "D8R",
+        "Equipment Type*": "DOZER",
+        "Make*": "CAT",
+        "Model*": "D8R",
         "Plate No": "AA-12345",
         "Asset No": "SSC-001",
         "New Asset No": "SSC-NEW-001",
         "Machine Serial": "CAT12345X",
+        "ENGINE NUMBER": "41Z21282",
+        "Project Area": "Gelan",
+        "PRICE": "250000",
         "Remarks": "Sample equipment entry"
       }
     ];
@@ -570,31 +538,21 @@ export default function EquipmentPage() {
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
         const equipmentList: InsertEquipment[] = jsonData.map((row: any) => ({
-          equipmentType: row["Equipment Type"] || "",
-          make: row["Make"] || "",
-          model: row["Model"] || "",
+          equipmentType: row["Equipment Type*"] || "",
+          make: row["Make*"] || "",
+          model: row["Model*"] || "",
           plateNo: row["Plate No"] || null,
           assetNo: row["Asset No"] || null,
           newAssetNo: row["New Asset No"] || null,
           machineSerial: row["Machine Serial"] || null,
+          engineNumber: row["ENGINE NUMBER"] || null,
+          projectArea: row["Project Area"] || null,
+          price: row["PRICE"] ? String(row["PRICE"]) : null,
           remarks: row["Remarks"] || null,
         }));
 
-        // Validate required fields
-        const invalidRows = equipmentList.filter(
-          (item) => !item.equipmentType || !item.make || !item.model
-        );
-
-        if (invalidRows.length > 0) {
-          toast({
-            title: "Validation Error",
-            description: `${invalidRows.length} rows missing required fields (Equipment Type, Make, Model)`,
-            variant: "destructive",
-          });
-          return;
-        }
-
-        importEquipmentMutation.mutate(equipmentList);
+        setPreviewData(equipmentList);
+        setIsPreviewOpen(true);
       } catch (error) {
         toast({
           title: "Import Error",
@@ -608,6 +566,11 @@ export default function EquipmentPage() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  };
+
+  const handleConfirmImport = () => {
+    importEquipmentMutation.mutate(previewData);
+    setIsPreviewOpen(false);
   };
 
   return (
@@ -688,24 +651,24 @@ export default function EquipmentPage() {
               <Download className="h-4 w-4 mr-2" />
               Download Template
             </Button>
-            
+
             <Button
               variant="outline"
               onClick={() => excelInputRef.current?.click()}
-              disabled={importExcelMutation.isPending}
+              disabled={importEquipmentMutation.isPending}
               data-testid="button-import-excel"
             >
               <FileSpreadsheet className="h-4 w-4 mr-2" />
-              {importExcelMutation.isPending ? "Importing..." : "Import Excel"}
+              {importEquipmentMutation.isPending ? "Importing..." : "Import Excel"}
             </Button>
             <input
               type="file"
               ref={excelInputRef}
-              onChange={handleExcelFileUpload}
+              onChange={handleFileImport}
               accept=".xlsx,.xls,.csv"
               className="hidden"
             />
-            
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button data-testid="button-add-menu">
@@ -725,8 +688,8 @@ export default function EquipmentPage() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
-      </div>
+        </div >
+      </div >
 
       <div className="flex-1 overflow-auto p-6">
         {isLoading ? (
@@ -748,18 +711,18 @@ export default function EquipmentPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {groupedEquipment.map((group) => {
               const groupKey = group.equipmentType;
-              
+
               // Find matching category for this equipment type
               const matchingCategory = categories?.find(cat => cat.name.toUpperCase() === groupKey.toUpperCase());
               const backgroundImage = matchingCategory?.backgroundImage || '/attached_assets/Capture_1760099408820.PNG';
-              
+
               return (
-                <Card 
-                  key={groupKey} 
-                  className="overflow-hidden hover-elevate" 
+                <Card
+                  key={groupKey}
+                  className="overflow-hidden hover-elevate"
                   data-testid={`card-equipment-group-${groupKey}`}
                 >
-                  <div 
+                  <div
                     className="relative h-48 bg-cover bg-center cursor-pointer"
                     style={{ backgroundImage: `url(${backgroundImage})` }}
                     data-testid={`header-equipment-type-${groupKey}`}
@@ -786,8 +749,8 @@ export default function EquipmentPage() {
                   <CardContent className="p-4">
                     <div className="flex gap-2">
                       {matchingCategory && (
-                        <Button 
-                          variant="outline" 
+                        <Button
+                          variant="outline"
                           size="sm"
                           className="flex-1 text-destructive hover:text-destructive"
                           onClick={(e) => {
@@ -800,8 +763,8 @@ export default function EquipmentPage() {
                           Delete Category
                         </Button>
                       )}
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         size="sm"
                         className="flex-1 text-destructive hover:text-destructive"
                         onClick={(e) => {
@@ -830,7 +793,7 @@ export default function EquipmentPage() {
         )}
       </div>
 
-      <EquipmentDetailDialog 
+      <EquipmentDetailDialog
         equipment={selectedEquipment}
         onClose={() => setSelectedEquipment(null)}
         onEdit={handleEdit}
@@ -946,13 +909,13 @@ export default function EquipmentPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="plantNumber">Plant Number</Label>
+                <Label htmlFor="engineNumber">Engine Number</Label>
                 <Input
-                  id="plantNumber"
-                  value={formData.plantNumber || ""}
-                  onChange={(e) => setFormData({ ...formData, plantNumber: e.target.value })}
-                  placeholder="e.g., PLT-001"
-                  data-testid="input-plant-number"
+                  id="engineNumber"
+                  value={formData.engineNumber || ""}
+                  onChange={(e) => setFormData({ ...formData, engineNumber: e.target.value })}
+                  placeholder="e.g., 41Z21282"
+                  data-testid="input-engine-number"
                 />
               </div>
 
@@ -964,6 +927,25 @@ export default function EquipmentPage() {
                   onChange={(e) => setFormData({ ...formData, projectArea: e.target.value })}
                   placeholder="e.g., Site A, Zone 3"
                   data-testid="input-project-area"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="price">Price</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.price ?? ""}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      price: e.target.value === "" ? null : e.target.value,
+                    })
+                  }
+                  placeholder="e.g., 250000"
+                  data-testid="input-price"
                 />
               </div>
 
@@ -1144,7 +1126,7 @@ export default function EquipmentPage() {
               Choose the driver to assign to this equipment
             </DialogDescription>
           </DialogHeader>
-          
+
           <div className="space-y-4">
             <Input
               placeholder="Search by name, ID, or role..."
@@ -1152,7 +1134,7 @@ export default function EquipmentPage() {
               onChange={(e) => setDriverSearchTerm(e.target.value)}
               data-testid="input-search-driver"
             />
-            
+
             <div className="border rounded-lg max-h-[400px] overflow-y-auto">
               <div className="divide-y">
                 {employees
@@ -1191,16 +1173,23 @@ export default function EquipmentPage() {
         </DialogContent>
       </Dialog>
 
-    </div>
+      <ImportPreviewDialog
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        onConfirm={handleConfirmImport}
+        data={previewData}
+        isImporting={importEquipmentMutation.isPending}
+      />
+    </div >
   );
 }
 
-function EquipmentDetailDialog({ 
-  equipment, 
+function EquipmentDetailDialog({
+  equipment,
   onClose,
   onEdit
-}: { 
-  equipment: Equipment | null; 
+}: {
+  equipment: Equipment | null;
   onClose: () => void;
   onEdit: (equipment: Equipment) => void;
 }) {
@@ -1222,16 +1211,16 @@ function EquipmentDetailDialog({
   if (!equipment) return null;
 
   // Calculate statistics
-  const totalMaintenanceCost = maintenanceRecords?.reduce((sum, record) => 
+  const totalMaintenanceCost = maintenanceRecords?.reduce((sum, record) =>
     sum + (Number(record.cost) || 0), 0
   ) || 0;
 
-  const totalLaborHours = maintenanceRecords?.reduce((sum, record) => 
+  const totalLaborHours = maintenanceRecords?.reduce((sum, record) =>
     sum + (Number(record.laborHours) || 0), 0
   ) || 0;
 
   const lastMaintenance = maintenanceRecords?.[0];
-  const avgPerformanceRating = operatingReports?.length 
+  const avgPerformanceRating = operatingReports?.length
     ? (operatingReports.reduce((sum, r) => sum + (r.performanceRating || 0), 0) / operatingReports.length).toFixed(1)
     : "N/A";
 

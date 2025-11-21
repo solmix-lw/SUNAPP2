@@ -38,7 +38,9 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ManufacturingSpecs } from "@/components/ManufacturingSpecs";
 import { DimensionViewer } from "@/components/DimensionViewer";
-import type { SparePart } from "@shared/schema";
+import * as XLSX from "xlsx";
+import type { SparePart, InsertSparePart } from "@shared/schema";
+import { SparePartImportPreviewDialog } from "@/components/SparePartImportPreviewDialog";
 
 export default function SparePartsPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -53,10 +55,10 @@ export default function SparePartsPage() {
     requiredTools: [] as string[],
     installTimeEstimates: { beginner: 0, average: 0, expert: 0 },
   });
-  
+
   // State for focused status view (all, low_stock, out_of_stock)
   const [focusedStatus, setFocusedStatus] = useState<string | null>(null);
-  
+
   // CRUD states
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -64,6 +66,7 @@ export default function SparePartsPage() {
   const [partToDelete, setPartToDelete] = useState<SparePart | null>(null);
   const [editingPart, setEditingPart] = useState<SparePart | null>(null);
   const [formData, setFormData] = useState({
+    manualId: "",
     partNumber: "",
     partName: "",
     description: "",
@@ -73,7 +76,11 @@ export default function SparePartsPage() {
     stockStatus: "in_stock",
     manufacturingSpecs: "",
   });
-  
+
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<InsertSparePart[]>([]);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const excelInputRef = useRef<HTMLInputElement>(null);
@@ -86,7 +93,7 @@ export default function SparePartsPage() {
   const formatPrice = (priceUSD: string | null | undefined): string => {
     if (!priceUSD) return "N/A";
     const numPrice = parseFloat(priceUSD);
-    
+
     if (currency === "ETB") {
       const priceETB = numPrice * USD_TO_ETB_RATE;
       return `${priceETB.toFixed(2)} Br`;
@@ -110,10 +117,10 @@ export default function SparePartsPage() {
   const uploadImagesMutation = useMutation({
     mutationFn: async (files: FileList) => {
       if (!selectedPart) throw new Error("No part selected");
-      
+
       const fileArray = Array.from(files);
       const token = localStorage.getItem('auth_token');
-      
+
       // Step 1: Get presigned upload URLs from backend for all images
       const urlResponse = await fetch(`/api/parts/${selectedPart.id}/images/upload-urls`, {
         method: 'POST',
@@ -129,7 +136,7 @@ export default function SparePartsPage() {
       }
 
       const { uploadData } = await urlResponse.json();
-      
+
       // Step 2: Upload each file to its presigned URL
       const uploadPromises = fileArray.map((file, index) => {
         return fetch(uploadData[index].uploadURL, {
@@ -142,7 +149,7 @@ export default function SparePartsPage() {
       });
 
       const uploadResults = await Promise.all(uploadPromises);
-      
+
       // Check if all uploads succeeded
       if (uploadResults.some(result => !result.ok)) {
         throw new Error('Failed to upload one or more images');
@@ -191,7 +198,7 @@ export default function SparePartsPage() {
   const uploadTutorialVideoMutation = useMutation({
     mutationFn: async (file: File) => {
       if (!selectedPart) throw new Error("No part selected");
-      
+
       // Upload video to local storage
       const token = localStorage.getItem('auth_token');
       const formData = new FormData();
@@ -228,24 +235,9 @@ export default function SparePartsPage() {
     },
   });
 
-  const importExcelMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const res = await fetch('/api/parts/import', {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'Import failed');
-      }
-      
+  const importPartsBatchMutation = useMutation({
+    mutationFn: async (partsList: InsertSparePart[]) => {
+      const res = await apiRequest("POST", "/api/parts/import", { parts: partsList });
       return res.json();
     },
     onSuccess: (data) => {
@@ -254,6 +246,7 @@ export default function SparePartsPage() {
         title: "Import Completed",
         description: `Created: ${data.results.created}, Updated: ${data.results.updated}, Skipped: ${data.results.skipped}`,
       });
+      setIsPreviewOpen(false);
     },
     onError: (error: any) => {
       toast({
@@ -277,45 +270,45 @@ export default function SparePartsPage() {
       }
 
       console.log('Starting spare parts template download...');
-      
+
       const res = await fetch('/api/parts/template', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
-      
+
       if (!res.ok) {
         const errorText = await res.text();
         throw new Error(errorText || 'Failed to download template');
       }
-      
+
       console.log('Template received, creating blob...');
       const blob = await res.blob();
       console.log('Blob created, size:', blob.size);
-      
-      const url = window.URL.createObjectURL(new Blob([blob], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+
+      const url = window.URL.createObjectURL(new Blob([blob], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       }));
-      
+
       const link = document.createElement('a');
       link.href = url;
       link.download = 'spare_parts_template.xlsx';
       link.setAttribute('download', 'spare_parts_template.xlsx');
-      
+
       document.body.appendChild(link);
-      
+
       setTimeout(() => {
         console.log('Triggering download click...');
         link.click();
         console.log('Download triggered');
-        
+
         setTimeout(() => {
           document.body.removeChild(link);
           window.URL.revokeObjectURL(url);
         }, 250);
       }, 50);
-      
+
       toast({
         title: "Template Ready",
         description: "Check your Downloads folder for spare_parts_template.xlsx. In some browsers, you may need to allow downloads from this site.",
@@ -334,10 +327,49 @@ export default function SparePartsPage() {
 
   const handleExcelFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      importExcelMutation.mutate(file);
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        const partsList: InsertSparePart[] = jsonData.map((row: any) => ({
+          manualId: row["Manual ID"] || null,
+          partNumber: row["Part Number*"] || "",
+          partName: row["Part Name*"] || "",
+          category: row["Category*"] || "",
+          description: row["Description"] || null,
+          price: row["Price"] ? String(row["Price"]) : null,
+          stockQuantity: row["Stock Quantity"] ? Number(row["Stock Quantity"]) : 0,
+          locationInstructions: row["Location Instructions"] || null,
+          stockStatus: "in_stock", // Default
+        }));
+
+        setPreviewData(partsList);
+        setIsPreviewOpen(true);
+      } catch (error) {
+        console.error("Import error:", error);
+        toast({
+          title: "Import Error",
+          description: "Failed to parse Excel file. Please use the template format.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+    if (excelInputRef.current) {
+      excelInputRef.current.value = "";
     }
-    event.target.value = "";
+  };
+
+  const handleConfirmImport = () => {
+    importPartsBatchMutation.mutate(previewData);
   };
 
   const updateMaintenanceMutation = useMutation({
@@ -380,7 +412,7 @@ export default function SparePartsPage() {
   const deleteImageMutation = useMutation({
     mutationFn: async (imageUrl: string) => {
       if (!selectedPart) throw new Error("No part selected");
-      
+
       const token = localStorage.getItem('auth_token');
       const response = await fetch(`/api/parts/${selectedPart.id}/images`, {
         method: 'DELETE',
@@ -496,6 +528,7 @@ export default function SparePartsPage() {
 
   const resetForm = () => {
     setFormData({
+      manualId: "",
       partNumber: "",
       partName: "",
       description: "",
@@ -515,6 +548,7 @@ export default function SparePartsPage() {
   const openEditDialog = (part: SparePart) => {
     setEditingPart(part);
     setFormData({
+      manualId: part.manualId || "",
       partNumber: part.partNumber,
       partName: part.partName,
       description: part.description || "",
@@ -536,7 +570,7 @@ export default function SparePartsPage() {
     // Trim whitespace and validate required fields
     const trimmedPartNumber = formData.partNumber.trim();
     const trimmedPartName = formData.partName.trim();
-    
+
     if (!trimmedPartNumber || !trimmedPartName) {
       toast({
         title: "Validation error",
@@ -545,7 +579,7 @@ export default function SparePartsPage() {
       });
       return;
     }
-    
+
     // Submit with trimmed values
     createPartMutation.mutate({
       ...formData,
@@ -556,11 +590,11 @@ export default function SparePartsPage() {
 
   const handleUpdateSubmit = () => {
     if (!editingPart) return;
-    
+
     // Trim whitespace and validate required fields
     const trimmedPartNumber = formData.partNumber.trim();
     const trimmedPartName = formData.partName.trim();
-    
+
     if (!trimmedPartNumber || !trimmedPartName) {
       toast({
         title: "Validation error",
@@ -569,7 +603,7 @@ export default function SparePartsPage() {
       });
       return;
     }
-    
+
     // Submit with trimmed values
     updatePartMutation.mutate({
       ...formData,
@@ -589,7 +623,7 @@ export default function SparePartsPage() {
       setMaintenanceForm({
         locationInstructions: selectedPart.locationInstructions || "",
         requiredTools: selectedPart.requiredTools || [],
-        installTimeEstimates: selectedPart.installTimeEstimates 
+        installTimeEstimates: selectedPart.installTimeEstimates
           ? JSON.parse(selectedPart.installTimeEstimates)
           : { beginner: 0, average: 0, expert: 0 },
       });
@@ -600,6 +634,7 @@ export default function SparePartsPage() {
   const filteredParts = parts?.filter((part) => {
     const matchesSearch =
       searchTerm === "" ||
+      part.manualId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       part.partNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       part.partName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       part.description?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -692,15 +727,15 @@ export default function SparePartsPage() {
                 <Download className="h-4 w-4 mr-2" />
                 Download Template
               </Button>
-              
+
               <Button
                 variant="outline"
                 onClick={() => excelInputRef.current?.click()}
-                disabled={importExcelMutation.isPending}
+                disabled={importPartsBatchMutation.isPending}
                 data-testid="button-import-excel"
               >
                 <FileSpreadsheet className="h-4 w-4 mr-2" />
-                {importExcelMutation.isPending ? "Importing..." : "Import Excel"}
+                {importPartsBatchMutation.isPending ? "Importing..." : "Import Excel"}
               </Button>
               <input
                 type="file"
@@ -709,7 +744,7 @@ export default function SparePartsPage() {
                 accept=".xlsx,.xls,.csv"
                 className="hidden"
               />
-              
+
               {isCEOorAdmin && (
                 <Button onClick={openCreateDialog} data-testid="button-create-part">
                   <Plus className="h-4 w-4 mr-2" />
@@ -721,8 +756,8 @@ export default function SparePartsPage() {
 
           {/* Inventory Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Card 
-              className="cursor-pointer hover-elevate active-elevate-2" 
+            <Card
+              className="cursor-pointer hover-elevate active-elevate-2"
               onClick={handleViewAllItems}
               data-testid="card-total-items"
             >
@@ -736,8 +771,8 @@ export default function SparePartsPage() {
               </CardContent>
             </Card>
 
-            <Card 
-              className="cursor-pointer hover-elevate active-elevate-2" 
+            <Card
+              className="cursor-pointer hover-elevate active-elevate-2"
               onClick={handleViewLowStock}
               data-testid="card-low-stock"
             >
@@ -751,8 +786,8 @@ export default function SparePartsPage() {
               </CardContent>
             </Card>
 
-            <Card 
-              className="cursor-pointer hover-elevate active-elevate-2" 
+            <Card
+              className="cursor-pointer hover-elevate active-elevate-2"
               onClick={handleViewOutOfStock}
               data-testid="card-out-of-stock"
             >
@@ -770,8 +805,8 @@ export default function SparePartsPage() {
           {/* Back Navigation when Focused Status is Active */}
           {focusedStatus && (
             <div className="flex items-center gap-3 mb-2">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={handleBackToCatalog}
                 data-testid="button-back-to-catalog"
               >
@@ -999,7 +1034,7 @@ export default function SparePartsPage() {
                           className="relative aspect-square bg-muted rounded-lg overflow-hidden group"
                           data-testid={`img-gallery-${idx}`}
                         >
-                          <div 
+                          <div
                             className="w-full h-full cursor-pointer"
                             onClick={() => setSelectedImage(url)}
                           >
@@ -1081,7 +1116,7 @@ export default function SparePartsPage() {
 
 
               {/* Hidden: 3D Model Available section */}
-              {false && selectedPart.model3dPath && (
+              {false && selectedPart?.model3dPath && (
                 <>
                   <Separator />
                   <div>
@@ -1090,7 +1125,7 @@ export default function SparePartsPage() {
                       A 3D schematic is available for this part. View it in the 3D Models section.
                     </p>
                     <p className="text-xs font-mono text-muted-foreground bg-muted p-2 rounded">
-                      {selectedPart.model3dPath}
+                      {selectedPart?.model3dPath}
                     </p>
                   </div>
                 </>
@@ -1101,16 +1136,16 @@ export default function SparePartsPage() {
               <ManufacturingSpecs part={selectedPart} />
 
               {/* Hidden: 3D Dimension Viewer */}
-              {false && selectedPart.manufacturingSpecs && (
+              {false && selectedPart?.manufacturingSpecs && (
                 <>
                   <Separator />
                   <div>
                     <h4 className="font-semibold text-lg mb-4">Technical Dimensions</h4>
                     <DimensionViewer
-                      partNumber={selectedPart.partNumber}
-                      partName={selectedPart.partName}
-                      specs={selectedPart.manufacturingSpecs as any}
-                      imageUrl={selectedPart.imageUrls?.[0]}
+                      partNumber={selectedPart?.partNumber || ""}
+                      partName={selectedPart?.partName || ""}
+                      specs={selectedPart?.manufacturingSpecs as any}
+                      imageUrl={selectedPart?.imageUrls?.[0]}
                     />
                   </div>
                 </>
@@ -1157,8 +1192,8 @@ export default function SparePartsPage() {
                       </label>
                       <Input
                         value={maintenanceForm.requiredTools.join(", ")}
-                        onChange={(e) => setMaintenanceForm({ 
-                          ...maintenanceForm, 
+                        onChange={(e) => setMaintenanceForm({
+                          ...maintenanceForm,
                           requiredTools: e.target.value.split(",").map(t => t.trim()).filter(Boolean)
                         })}
                         placeholder="e.g., Socket wrench set, Torque wrench, Pliers"
@@ -1240,14 +1275,14 @@ export default function SparePartsPage() {
                 ) : (
                   <div className="space-y-4">
                     {/* Hidden: Part Location section */}
-                    {false && selectedPart.locationInstructions && (
+                    {false && selectedPart?.locationInstructions && (
                       <div className="bg-muted/50 p-4 rounded-lg">
                         <div className="flex items-start gap-3">
                           <MapPin className="h-5 w-5 text-primary mt-0.5" />
                           <div className="flex-1">
                             <h5 className="font-medium mb-1">Part Location</h5>
                             <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                              {selectedPart.locationInstructions}
+                              {selectedPart?.locationInstructions}
                             </p>
                           </div>
                         </div>
@@ -1402,6 +1437,19 @@ export default function SparePartsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="manualId">Manual ID (Optional)</Label>
+              <Input
+                id="manualId"
+                value={formData.manualId}
+                onChange={(e) => setFormData({ ...formData, manualId: e.target.value })}
+                placeholder="e.g., SP-001, CUSTOM-123"
+                data-testid="input-manual-id"
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional custom identifier for this part
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="partNumber">Part Number *</Label>
@@ -1525,6 +1573,19 @@ export default function SparePartsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-manualId">Manual ID (Optional)</Label>
+              <Input
+                id="edit-manualId"
+                value={formData.manualId}
+                onChange={(e) => setFormData({ ...formData, manualId: e.target.value })}
+                placeholder="e.g., SP-001, CUSTOM-123"
+                data-testid="input-edit-manual-id"
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional custom identifier for this part
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-partNumber">Part Number *</Label>
@@ -1661,6 +1722,13 @@ export default function SparePartsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <SparePartImportPreviewDialog
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        onConfirm={handleConfirmImport}
+        data={previewData}
+        isImporting={importPartsBatchMutation.isPending}
+      />
     </div>
   );
 }

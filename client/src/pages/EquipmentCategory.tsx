@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,13 +24,14 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { 
+import type {
   Equipment,
   EquipmentCategory,
-  MaintenanceRecordWithDetails, 
+  Employee,
+  MaintenanceRecordWithDetails,
   OperatingBehaviorReport,
   PartsUsageHistory,
-  SparePart 
+  SparePart
 } from "@shared/schema";
 
 // Background image mapping for different equipment categories
@@ -100,6 +102,10 @@ export default function EquipmentCategoryPage() {
     assetNo: "",
     newAssetNo: "",
     machineSerial: "",
+    engineNumber: "",
+    projectArea: "",
+    price: null as string | null,
+    assignedDriverId: null as string | null,
     remarks: "",
   });
   const [isEditCategoryDialogOpen, setIsEditCategoryDialogOpen] = useState(false);
@@ -109,6 +115,9 @@ export default function EquipmentCategoryPage() {
     description: "",
     backgroundImage: "",
   });
+  const [selectedDriver, setSelectedDriver] = useState<Employee | null>(null);
+  const [driverDialogOpen, setDriverDialogOpen] = useState(false);
+  const [driverSearchTerm, setDriverSearchTerm] = useState("");
   const { toast } = useToast();
 
   const { data: equipment, isLoading } = useQuery<Equipment[]>({
@@ -117,6 +126,10 @@ export default function EquipmentCategoryPage() {
 
   const { data: categories } = useQuery<EquipmentCategory[]>({
     queryKey: ["/api/equipment-categories"],
+  });
+
+  const { data: employees } = useQuery<Employee[]>({
+    queryKey: ["/api/employees"],
   });
 
   // Try to find a matching category by name
@@ -139,8 +152,8 @@ export default function EquipmentCategoryPage() {
   const categoryEquipment = equipment?.filter((item) => {
     if (matchedCategory) {
       // Include equipment with matching categoryId OR legacy equipment matching equipmentType
-      return item.categoryId === matchedCategory.id || 
-             (!item.categoryId && item.equipmentType.toUpperCase().trim() === equipmentType);
+      return item.categoryId === matchedCategory.id ||
+        (!item.categoryId && item.equipmentType.toUpperCase().trim() === equipmentType);
     }
     return item.equipmentType.toUpperCase().trim() === equipmentType;
   });
@@ -187,10 +200,10 @@ export default function EquipmentCategoryPage() {
       resetForm();
     },
     onError: (error: Error) => {
-      toast({ 
-        title: "Error", 
-        description: error.message || "Failed to update equipment", 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update equipment",
+        variant: "destructive"
       });
     },
   });
@@ -208,10 +221,10 @@ export default function EquipmentCategoryPage() {
       setSelectedEquipment(null);
     },
     onError: (error: Error) => {
-      toast({ 
-        title: "Error", 
-        description: error.message || "Failed to delete equipment", 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete equipment",
+        variant: "destructive"
       });
     },
   });
@@ -231,10 +244,10 @@ export default function EquipmentCategoryPage() {
       resetCategoryForm();
     },
     onError: (error: Error) => {
-      toast({ 
-        title: "Error", 
-        description: error.message || "Failed to update category", 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update category",
+        variant: "destructive"
       });
     },
   });
@@ -254,10 +267,10 @@ export default function EquipmentCategoryPage() {
       window.location.href = "/equipment";
     },
     onError: (error: Error) => {
-      toast({ 
-        title: "Error", 
-        description: error.message || "Failed to delete category", 
-        variant: "destructive" 
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete category",
+        variant: "destructive"
       });
     },
   });
@@ -272,8 +285,13 @@ export default function EquipmentCategoryPage() {
       assetNo: "",
       newAssetNo: "",
       machineSerial: "",
+      engineNumber: "",
+      projectArea: "",
+      price: null,
+      assignedDriverId: null,
       remarks: "",
     });
+    setSelectedDriver(null);
   };
 
   const resetCategoryForm = () => {
@@ -296,8 +314,21 @@ export default function EquipmentCategoryPage() {
       assetNo: equipment.assetNo || "",
       newAssetNo: equipment.newAssetNo || "",
       machineSerial: equipment.machineSerial || "",
+      engineNumber: equipment.engineNumber || "",
+      projectArea: equipment.projectArea || "",
+      price: (equipment.price as string | null) || null,
+      assignedDriverId: equipment.assignedDriverId || null,
       remarks: equipment.remarks || "",
     });
+
+    // Find and set the assigned driver
+    if (equipment.assignedDriverId && employees) {
+      const driver = employees.find(emp => emp.id === equipment.assignedDriverId);
+      setSelectedDriver(driver || null);
+    } else {
+      setSelectedDriver(null);
+    }
+
     setIsEditDialogOpen(true);
   };
 
@@ -337,6 +368,16 @@ export default function EquipmentCategoryPage() {
     }
   };
 
+  const handleDriverSelect = (driver: Employee) => {
+    setSelectedDriver(driver);
+    setFormData({
+      ...formData,
+      assignedDriverId: driver.id,
+    });
+    setDriverDialogOpen(false);
+    setDriverSearchTerm("");
+  };
+
   if (isLoading) {
     return (
       <div className="flex-1 overflow-auto">
@@ -360,7 +401,7 @@ export default function EquipmentCategoryPage() {
   const maintenanceRecordsCount = equipmentMaintenanceRecords.length;
   const totalCost = equipmentMaintenanceRecords.reduce((sum, r) => sum + (parseFloat(r.cost || '0')), 0);
   const totalLaborHours = equipmentMaintenanceRecords.reduce((sum, r) => sum + (parseFloat(r.laborHours || '0')), 0);
-  
+
   const equipmentOperatingReports = operatingReports?.filter(r => r.equipmentId === selectedEquipment?.id) ?? [];
   const avgPerformance = equipmentOperatingReports.length > 0
     ? equipmentOperatingReports.reduce((sum, r) => sum + (r.performanceRating || 0), 0) / equipmentOperatingReports.length
@@ -369,7 +410,7 @@ export default function EquipmentCategoryPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Header Banner with Background */}
-      <div 
+      <div
         className="relative h-64 bg-cover bg-center flex-shrink-0"
         style={{ backgroundImage: `url(${backgroundImage})` }}
         data-testid="header-category-banner"
@@ -384,7 +425,7 @@ export default function EquipmentCategoryPage() {
               </Button>
             </Link>
           </div>
-          
+
           <div className="flex-1 flex items-center justify-between">
             <div className="flex items-center gap-4">
               <h1 className="text-6xl font-bold text-white" data-testid="text-category-name">
@@ -413,7 +454,7 @@ export default function EquipmentCategoryPage() {
                 </div>
               )}
             </div>
-            
+
             <div className="text-right">
               <p className="text-7xl font-bold text-white" data-testid="text-total-units">
                 {categoryEquipment?.length || 0}
@@ -447,8 +488,8 @@ export default function EquipmentCategoryPage() {
           {filteredEquipment && filteredEquipment.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredEquipment.map((item) => (
-                <Card 
-                  key={item.id} 
+                <Card
+                  key={item.id}
                   className="hover-elevate cursor-pointer"
                   onClick={() => setSelectedEquipment(item)}
                   data-testid={`card-equipment-${item.id}`}
@@ -643,23 +684,23 @@ export default function EquipmentCategoryPage() {
                 <p className="text-muted-foreground text-center py-8">No maintenance records found</p>
               ) : (
                 equipmentMaintenanceRecords.map((record) => (
-                    <Card key={record.id}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h4 className="font-semibold">{record.maintenanceType}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {record.maintenanceDate ? format(new Date(record.maintenanceDate), "PPP") : "N/A"}
-                            </p>
-                          </div>
-                          <Badge variant={record.status === 'Completed' ? 'default' : 'secondary'}>
-                            {record.status}
-                          </Badge>
+                  <Card key={record.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h4 className="font-semibold">{record.maintenanceType}</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {record.maintenanceDate ? format(new Date(record.maintenanceDate), "PPP") : "N/A"}
+                          </p>
                         </div>
-                        <p className="text-sm">{record.description}</p>
-                      </CardContent>
-                    </Card>
-                  ))
+                        <Badge variant={record.status === 'Completed' ? 'default' : 'secondary'}>
+                          {record.status}
+                        </Badge>
+                      </div>
+                      <p className="text-sm">{record.description}</p>
+                    </CardContent>
+                  </Card>
+                ))
               )}
             </TabsContent>
 
@@ -668,20 +709,20 @@ export default function EquipmentCategoryPage() {
                 <p className="text-muted-foreground text-center py-8">No operating reports found</p>
               ) : (
                 equipmentOperatingReports.map((report) => (
-                    <Card key={report.id}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h4 className="font-semibold">Operating Report</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {report.reportDate ? format(new Date(report.reportDate), "PPP") : "N/A"}
-                            </p>
-                          </div>
+                  <Card key={report.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h4 className="font-semibold">Operating Report</h4>
+                          <p className="text-sm text-muted-foreground">
+                            {report.reportDate ? format(new Date(report.reportDate), "PPP") : "N/A"}
+                          </p>
                         </div>
-                        <p className="text-sm">{report.operatorNotes || report.issuesReported || "No notes available"}</p>
-                      </CardContent>
-                    </Card>
-                  ))
+                      </div>
+                      <p className="text-sm">{report.operatorNotes || report.issuesReported || "No notes available"}</p>
+                    </CardContent>
+                  </Card>
+                ))
               )}
             </TabsContent>
 
@@ -689,18 +730,18 @@ export default function EquipmentCategoryPage() {
               {(() => {
                 // Get maintenance records for this equipment (reuse already filtered array)
                 const maintenanceRecordIds = equipmentMaintenanceRecords.map(r => r.id);
-                
+
                 // Filter parts usage by maintenance records for this equipment
                 const equipmentPartsUsage = partsUsage?.filter(p => maintenanceRecordIds.includes(p.maintenanceRecordId)) ?? [];
-                
+
                 if (equipmentPartsUsage.length === 0) {
                   return <p className="text-muted-foreground text-center py-8">No parts usage history found</p>;
                 }
-                
+
                 return equipmentPartsUsage.map((usage) => {
                   const part = spareParts?.find(sp => sp.id === usage.partId);
                   const maintenanceRecord = equipmentMaintenanceRecords.find(r => r.id === usage.maintenanceRecordId);
-                  
+
                   return (
                     <Card key={usage.id}>
                       <CardContent className="p-4">
@@ -801,21 +842,82 @@ export default function EquipmentCategoryPage() {
                   id="machineSerial"
                   value={formData.machineSerial || ""}
                   onChange={(e) => setFormData({ ...formData, machineSerial: e.target.value })}
-                  placeholder="e.g., SN-123456"
+                  placeholder="e.g., CAT12345X"
                   data-testid="input-machine-serial"
                 />
               </div>
 
-              <div className="space-y-2 col-span-2">
-                <Label htmlFor="remarks">Remarks</Label>
+              <div className="space-y-2">
+                <Label htmlFor="engineNumber">Engine Number</Label>
                 <Input
-                  id="remarks"
-                  value={formData.remarks || ""}
-                  onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
-                  placeholder="Additional notes"
-                  data-testid="input-remarks"
+                  id="engineNumber"
+                  value={formData.engineNumber || ""}
+                  onChange={(e) => setFormData({ ...formData, engineNumber: e.target.value })}
+                  placeholder="e.g., 41Z21282"
+                  data-testid="input-engine-number"
                 />
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="projectArea">Project Area</Label>
+                <Input
+                  id="projectArea"
+                  value={formData.projectArea || ""}
+                  onChange={(e) => setFormData({ ...formData, projectArea: e.target.value })}
+                  placeholder="e.g., Site A, Zone 3"
+                  data-testid="input-project-area"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="price">Price</Label>
+                <Input
+                  id="price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.price ?? ""}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      price: e.target.value === "" ? null : e.target.value,
+                    })
+                  }
+                  placeholder="e.g., 250000"
+                  data-testid="input-price"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Assigned Driver</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start text-left font-normal"
+                  onClick={() => setDriverDialogOpen(true)}
+                  data-testid="button-select-assigned-driver"
+                >
+                  {selectedDriver ? (
+                    <span className="truncate">
+                      {selectedDriver.fullName} ({selectedDriver.employeeId})
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Click to Select Driver</span>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="remarks">Remarks</Label>
+              <Textarea
+                id="remarks"
+                value={formData.remarks || ""}
+                onChange={(e) => setFormData({ ...formData, remarks: e.target.value })}
+                placeholder="Additional notes or comments"
+                rows={3}
+                data-testid="textarea-remarks"
+              />
             </div>
 
             <div className="flex justify-end gap-2 pt-4">
@@ -831,7 +933,7 @@ export default function EquipmentCategoryPage() {
               >
                 Cancel
               </Button>
-              <Button 
+              <Button
                 type="submit"
                 disabled={updateEquipmentMutation.isPending}
                 data-testid="button-submit-edit"
@@ -840,6 +942,62 @@ export default function EquipmentCategoryPage() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Driver Selection Dialog */}
+      <Dialog open={driverDialogOpen} onOpenChange={setDriverDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>Select Assigned Driver</DialogTitle>
+            <DialogDescription>
+              Choose the driver to assign to this equipment
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <Input
+              placeholder="Search by name, ID, or role..."
+              value={driverSearchTerm}
+              onChange={(e) => setDriverSearchTerm(e.target.value)}
+              data-testid="input-search-driver"
+            />
+
+            <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+              <div className="divide-y">
+                {employees
+                  ?.filter((emp) => {
+                    if (!driverSearchTerm) return true;
+                    const searchLower = driverSearchTerm.toLowerCase();
+                    return (
+                      emp.fullName.toLowerCase().includes(searchLower) ||
+                      emp.employeeId?.toLowerCase().includes(searchLower) ||
+                      emp.role?.toLowerCase().includes(searchLower)
+                    );
+                  })
+                  .map((driver) => (
+                    <div
+                      key={driver.id}
+                      className="p-4 hover:bg-muted cursor-pointer transition-colors"
+                      onClick={() => handleDriverSelect(driver)}
+                      data-testid={`driver-option-${driver.id}`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-medium">{driver.fullName}</div>
+                          <div className="text-sm text-muted-foreground">
+                            {driver.employeeId} • {driver.role || "No role"}
+                          </div>
+                        </div>
+                        {selectedDriver?.id === driver.id && (
+                          <Badge>Selected</Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -911,9 +1069,9 @@ export default function EquipmentCategoryPage() {
             </div>
 
             <div className="flex gap-2 justify-end">
-              <Button 
-                type="button" 
-                variant="outline" 
+              <Button
+                type="button"
+                variant="outline"
                 onClick={() => {
                   setIsEditCategoryDialogOpen(false);
                   resetCategoryForm();

@@ -1090,7 +1090,7 @@ export default function Inspection() {
                   </div>
                   <div>
                     <Label className="text-muted-foreground text-sm">Equipment:</Label>
-                    <p className="font-medium mt-1">{viewingInspection.reception?.equipment?.model || viewingInspection.reception?.equipment?.plantNumber || "N/A"}</p>
+                    <p className="font-medium mt-1">{viewingInspection.reception?.equipment?.model || viewingInspection.reception?.equipment?.plateNo || "N/A"}</p>
                   </div>
                   <div>
                     <Label className="text-muted-foreground text-sm">Plant Number:</Label>

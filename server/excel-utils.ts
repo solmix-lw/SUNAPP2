@@ -28,23 +28,23 @@ export interface ExcelImportError {
 
 export function generateExcelTemplate(config: ExcelTemplateConfig): Buffer {
   const workbook = XLSX.utils.book_new();
-  
+
   // Create worksheet with headers
   const worksheetData = [config.headers];
-  
+
   // Add sample data if provided
   if (config.sampleData && config.sampleData.length > 0) {
     worksheetData.push(...config.sampleData);
   }
-  
+
   const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
-  
+
   // Set column widths for better readability
   const colWidths = config.headers.map(() => ({ wch: 20 }));
   worksheet['!cols'] = colWidths;
-  
+
   XLSX.utils.book_append_sheet(workbook, worksheet, config.sheetName);
-  
+
   // Generate buffer
   const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   return buffer;
@@ -52,16 +52,16 @@ export function generateExcelTemplate(config: ExcelTemplateConfig): Buffer {
 
 export function parseExcelFile(buffer: Buffer, sheetName?: string): any[] {
   const workbook = XLSX.read(buffer, { type: 'buffer' });
-  
+
   // Use first sheet if sheetName not specified
-  const sheet = sheetName 
-    ? workbook.Sheets[sheetName] 
+  const sheet = sheetName
+    ? workbook.Sheets[sheetName]
     : workbook.Sheets[workbook.SheetNames[0]];
-  
+
   if (!sheet) {
     throw new Error(`Sheet "${sheetName || workbook.SheetNames[0]}" not found`);
   }
-  
+
   // Convert sheet to JSON
   const data = XLSX.utils.sheet_to_json(sheet, { defval: null });
   return data;
@@ -75,20 +75,20 @@ export function validateAndTransformExcelData<T>(
 ): ExcelImportResult<T> {
   const errors: ExcelImportError[] = [];
   const validData: T[] = [];
-  
+
   // Check if required headers are present in first row
   if (rawData.length > 0) {
     const firstRow = rawData[0];
     const missingHeaders = config.requiredHeaders.filter(
       (header) => !(header in firstRow)
     );
-    
+
     if (missingHeaders.length > 0) {
       errors.push({
         row: 0,
         message: `Missing required columns: ${missingHeaders.join(', ')}`,
       });
-      
+
       return {
         success: false,
         errors,
@@ -100,7 +100,7 @@ export function validateAndTransformExcelData<T>(
       };
     }
   }
-  
+
   // Process each row
   rawData.forEach((row, index) => {
     try {
@@ -110,13 +110,13 @@ export function validateAndTransformExcelData<T>(
         const dbField = config.fieldMapping[excelHeader];
         mappedRow[dbField] = row[excelHeader];
       });
-      
+
       // Apply custom transformer if provided
       const transformed = transformer ? transformer(mappedRow) : mappedRow;
-      
+
       // Validate using Zod schema
       const result = validator.safeParse(transformed);
-      
+
       if (result.success) {
         validData.push(result.data);
       } else {
@@ -136,7 +136,7 @@ export function validateAndTransformExcelData<T>(
       });
     }
   });
-  
+
   return {
     success: errors.length === 0,
     data: validData,
@@ -183,6 +183,7 @@ export const employeeTemplateConfig: ExcelTemplateConfig = {
 export const sparePartsTemplateConfig: ExcelTemplateConfig = {
   sheetName: 'Spare Parts',
   headers: [
+    'Manual ID',
     'Part Number*',
     'Part Name*',
     'Category*',
@@ -192,6 +193,7 @@ export const sparePartsTemplateConfig: ExcelTemplateConfig = {
     'Location Instructions',
   ],
   fieldMapping: {
+    'Manual ID': 'manualId',
     'Part Number*': 'partNumber',
     'Part Name*': 'partName',
     'Category*': 'category',
@@ -202,8 +204,8 @@ export const sparePartsTemplateConfig: ExcelTemplateConfig = {
   },
   requiredHeaders: ['Part Number*', 'Part Name*', 'Category*'],
   sampleData: [
-    ['PN-001', 'Engine Oil Filter', 'Engine', 'Standard oil filter for CAT engines', '25.50', '100', 'Engine compartment, left side'],
-    ['PN-002', 'Hydraulic Hose', 'Hydraulic', '1/2 inch hydraulic hose', '15.75', '50', 'Hydraulic system, main line'],
+    ['SP-001', 'PN-001', 'Engine Oil Filter', 'Engine', 'Standard oil filter for CAT engines', '25.50', '100', 'Engine compartment, left side'],
+    ['SP-002', 'PN-002', 'Hydraulic Hose', 'Hydraulic', '1/2 inch hydraulic hose', '15.75', '50', 'Hydraulic system, main line'],
   ],
 };
 
@@ -218,9 +220,9 @@ export const equipmentTemplateConfig: ExcelTemplateConfig = {
     'Asset No',
     'New Asset No',
     'Machine Serial',
-    'Plant Number',
+    'ENGINE NUMBER',
     'Project Area',
-    'Price',
+    'PRICE',
     'Remarks',
   ],
   fieldMapping: {
@@ -231,14 +233,14 @@ export const equipmentTemplateConfig: ExcelTemplateConfig = {
     'Asset No': 'assetNo',
     'New Asset No': 'newAssetNo',
     'Machine Serial': 'machineSerial',
-    'Plant Number': 'plantNumber',
+    'ENGINE NUMBER': 'engineNumber',
     'Project Area': 'projectArea',
-    'Price': 'price',
+    'PRICE': 'price',
     'Remarks': 'remarks',
   },
   requiredHeaders: ['Equipment Type*', 'Make*', 'Model*'],
   sampleData: [
-    ['DOZER', 'CAT', 'D8R', 'AA-12345', 'AST-001', 'NAST-001', 'SN123456', 'PLANT-01', 'Area A', '250000', ''],
-    ['WHEEL LOADER', 'KOMATSU', 'WA470', 'AA-67890', 'AST-002', 'NAST-002', 'SN789012', 'PLANT-02', 'Area B', '180000', ''],
+    ['DOZER', 'CAT', 'D8R', 'AA-12345', 'AST-001', 'NAST-001', 'SN123456', '41Z21282', 'Gelan', '250000', 'Sample remarks'],
+    ['WHEEL LOADER', 'KOMATSU', 'WA470', 'AA-67890', 'AST-002', 'NAST-002', 'SN789012', '41Z23246', 'JIHUR', '180000', ''],
   ],
 };
