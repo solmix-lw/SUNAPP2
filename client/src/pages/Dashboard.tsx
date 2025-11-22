@@ -395,7 +395,13 @@ export default function Dashboard() {
             <div className="mt-6">
               <h2 className="text-lg font-semibold mb-4">Cost Analytics</h2>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-                <Card>
+                <Card
+                  className="cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => {
+                    setDrilldownContext({ type: 'costType', value: 'labor', label: 'Labor Cost Details' });
+                    setDrilldownOpen(true);
+                  }}
+                >
                   <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Labor Cost</CardTitle>
                     <Users className="h-4 w-4 text-muted-foreground" />
@@ -410,7 +416,13 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card
+                  className="cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => {
+                    setDrilldownContext({ type: 'costType', value: 'lubricants', label: 'Lubricant Cost Details' });
+                    setDrilldownOpen(true);
+                  }}
+                >
                   <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Lubricant Cost</CardTitle>
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
@@ -425,7 +437,13 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card
+                  className="cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => {
+                    setDrilldownContext({ type: 'costType', value: 'outsource', label: 'Outsource Cost Details' });
+                    setDrilldownOpen(true);
+                  }}
+                >
                   <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Outsource Cost</CardTitle>
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
@@ -440,7 +458,13 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card
+                  className="cursor-pointer hover:bg-accent/50 transition-colors"
+                  onClick={() => {
+                    setDrilldownContext({ type: 'costType', value: 'spareParts', label: 'Spare Part Cost Details' });
+                    setDrilldownOpen(true);
+                  }}
+                >
                   <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
                     <CardTitle className="text-sm font-medium">Spare Part Cost</CardTitle>
                     <Package className="h-4 w-4 text-muted-foreground" />

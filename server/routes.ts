@@ -3304,6 +3304,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/work-orders - Fetch work orders with filtering and cost data
+  app.get("/api/work-orders", isAuthenticated, async (req, res) => {
+    try {
+      const {
+        workshopId,
+        completedAfter,
+        completedBefore,
+        equipmentModel,
+        garage,
+        hasCostData
+      } = req.query;
+
+      // Base query
+      let query = db
+        .select({
+          id: workOrders.id,
+          workOrderNumber: workOrders.workOrderNumber,
+          description: workOrders.description,
+          status: workOrders.status,
+          completedAt: workOrders.completedAt,
+          actualLaborCost: workOrders.actualLaborCost,
+          actualLubricantCost: workOrders.actualLubricantCost,
+          actualOutsourceCost: workOrders.actualOutsourceCost,
+          totalActualCost: workOrders.totalActualCost,
+          equipmentModel: equipment.model,
+        })
+        .from(workOrders)
+        .leftJoin(equipment, eq(workOrders.equipmentId, equipment.id));
+
+      const conditions = [];
+
+      // Filter by completion date
+      if (completedAfter) {
+        conditions.push(gte(workOrders.completedAt, new Date(completedAfter as string)));
+      }
+      if (completedBefore) {
+        conditions.push(lte(workOrders.completedAt, new Date(completedBefore as string)));
+      }
+
+      // Filter by status (if hasCostData is requested, imply completed status)
+      if (hasCostData === 'true') {
+        conditions.push(eq(workOrders.status, 'completed'));
+      }
+
+      // Filter by equipment model
+      if (equipmentModel) {
+        conditions.push(eq(equipment.model, equipmentModel as string));
+      }
+
+      // Filter by workshop
+      if (workshopId && workshopId !== 'all') {
+        const workshopMatches = db
+          .select({ workOrderId: workOrderWorkshops.workOrderId })
+          .from(workOrderWorkshops)
+          .where(eq(workOrderWorkshops.workshopId, workshopId as string));
+        conditions.push(inArray(workOrders.id, workshopMatches));
+      }
+
+      // Filter by garage
+      if (garage) {
+        const garageMatches = db
+          .select({ workOrderId: workOrderGarages.workOrderId })
+          .from(workOrderGarages)
+          .leftJoin(garages, eq(workOrderGarages.garageId, garages.id))
+          .where(eq(garages.name, garage as string));
+        conditions.push(inArray(workOrders.id, garageMatches));
+      }
+
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions));
+      }
+
+      const results = await query.orderBy(desc(workOrders.completedAt));
+
+      // Calculate spare parts costs for each work order
+      // This is needed because spare parts costs are not stored on the work order directly
+      if (results.length > 0) {
+        const workOrderIds = results.map(r => r.id);
+
+        // Fetch parts receipts
+        const receipts = await db
+          .select({
+            workOrderId: partsReceipts.workOrderId,
+            sparePartId: partsReceipts.sparePartId,
+            quantityIssued: partsReceipts.quantityIssued,
+          })
+          .from(partsReceipts)
+          .where(inArray(partsReceipts.workOrderId, workOrderIds));
+
+        // Get unique part IDs to fetch prices
+        const partIds = [...new Set(receipts.map(r => r.sparePartId).filter(Boolean))];
+        const partPrices = new Map();
+
+        if (partIds.length > 0) {
+          const parts = await db
+            .select({ id: spareParts.id, price: spareParts.price })
+            .from(spareParts)
+            .where(inArray(spareParts.id, partIds));
+
+          parts.forEach(p => {
+            if (p.price) partPrices.set(p.id, parseFloat(p.price));
+          });
+        }
+
+        // Calculate costs per work order
+        const sparePartsCosts = new Map();
+        receipts.forEach(r => {
+          if (r.workOrderId && r.sparePartId) {
+            const price = partPrices.get(r.sparePartId) || 0;
+            const cost = price * (r.quantityIssued || 0);
+            const current = sparePartsCosts.get(r.workOrderId) || 0;
+            sparePartsCosts.set(r.workOrderId, current + cost);
+          }
+        });
+
+        // Merge costs into results
+        const enrichedResults = results.map(order => {
+          const sparePartCost = sparePartsCosts.get(order.id) || 0;
+          const currentTotal = parseFloat(order.totalActualCost || '0');
+
+          // If totalActualCost doesn't include spare parts (which it doesn't in current schema),
+          // we should add it for the display
+          return {
+            ...order,
+            actualSparePartsCost: sparePartCost.toString(),
+            totalActualCost: (currentTotal + sparePartCost).toString()
+          };
+        });
+
+        return res.json(enrichedResults);
+      }
+
+      res.json(results);
+    } catch (error) {
+      console.error("Error fetching work orders:", error);
+      res.status(500).json({ error: "Failed to fetch work orders" });
+    }
+  });
+
   app.post("/api/work-orders", isCEOOrAdmin, async (req, res) => {
     try {
       // Extract requiredParts, garageIds, and workshopIds from body

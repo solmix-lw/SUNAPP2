@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
-import { FileText, Calendar, Wrench } from "lucide-react";
+import { FileText, Calendar, Wrench, Package } from "lucide-react";
 import { format } from "date-fns";
 import { getFiscalQuarterRange } from "@shared/fiscal";
 
@@ -24,14 +24,14 @@ interface CostDrilldownDialogProps {
   dailyDate: string;
 }
 
-export default function CostDrilldownDialog({ 
-  open, 
-  onOpenChange, 
-  context, 
-  workshopId, 
-  timePeriod, 
-  startDate, 
-  endDate, 
+export default function CostDrilldownDialog({
+  open,
+  onOpenChange,
+  context,
+  workshopId,
+  timePeriod,
+  startDate,
+  endDate,
   year,
   useCustomRange,
   weekStartDate,
@@ -40,26 +40,26 @@ export default function CostDrilldownDialog({
   // Build query params based on drill-down context AND dashboard filters
   const buildQueryParams = () => {
     if (!context.type || !context.value) return '';
-    
+
     const params = new URLSearchParams();
     params.append('status', 'completed'); // Only completed orders have cost data
-    
+
     // Add workshop filter from dashboard
     if (workshopId && workshopId !== 'all') {
       params.append('workshopId', workshopId);
     }
-    
+
     // Add context-specific filter
     if (context.type === 'month') {
       // Filter by completion month
       const [year, month] = context.value.split('-');
       let monthStart = new Date(parseInt(year), parseInt(month) - 1, 1);
       let monthEnd = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59);
-      
+
       // Clamp to active dashboard period (custom, weekly, daily, or any other active filter)
       let dashboardStart: Date | null = null;
       let dashboardEnd: Date | null = null;
-      
+
       if (useCustomRange && startDate && endDate) {
         // Custom range
         dashboardStart = new Date(startDate);
@@ -78,13 +78,13 @@ export default function CostDrilldownDialog({
         dashboardEnd = new Date(dailyDate);
         dashboardEnd.setHours(23, 59, 59, 999);
       }
-      
+
       // Intersect month range with dashboard period bounds
       if (dashboardStart && dashboardEnd) {
         monthStart = monthStart < dashboardStart ? dashboardStart : monthStart;
         monthEnd = monthEnd > dashboardEnd ? dashboardEnd : monthEnd;
       }
-      
+
       params.append('completedAfter', monthStart.toISOString());
       params.append('completedBefore', monthEnd.toISOString());
     } else if (context.type === 'equipmentType') {
@@ -96,13 +96,13 @@ export default function CostDrilldownDialog({
       // Additional filtering will be done client-side to show only relevant cost type
       params.append('hasCostData', 'true');
     }
-    
+
     // Add dashboard date range filters if not month-specific drill-down
     // IMPORTANT: Replicate Dashboard's exact date logic to ensure drill-down matches chart data
     if (context.type !== 'month') {
       let filterStart: Date | null = null;
       let filterEnd: Date | null = null;
-      
+
       if (useCustomRange && startDate && endDate) {
         // Custom date range
         filterStart = new Date(startDate);
@@ -150,13 +150,13 @@ export default function CostDrilldownDialog({
         filterStart = new Date(year, 0, 1);
         filterEnd = new Date(year, 11, 31, 23, 59, 59);
       }
-      
+
       if (filterStart && filterEnd) {
         params.append('completedAfter', filterStart.toISOString());
         params.append('completedBefore', filterEnd.toISOString());
       }
     }
-    
+
     return params.toString();
   };
 
@@ -191,8 +191,8 @@ export default function CostDrilldownDialog({
               <CardContent>
                 <div className="space-y-4">
                   {workOrders.map((order: any) => (
-                    <div 
-                      key={order.id} 
+                    <div
+                      key={order.id}
                       className="p-4 border rounded-lg hover-elevate"
                       data-testid={`drilldown-order-${order.id}`}
                     >
@@ -238,7 +238,7 @@ export default function CostDrilldownDialog({
                         </div>
                       </div>
 
-                      <div className="mt-3 pt-3 border-t grid grid-cols-3 gap-2 text-xs">
+                      <div className="mt-3 pt-3 border-t grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                         <div>
                           <span className="text-muted-foreground">Labor:</span>
                           <span className="ml-1 font-medium" data-testid={`cost-labor-${order.id}`}>
@@ -252,9 +252,14 @@ export default function CostDrilldownDialog({
                           </span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">Outsource:</span>
                           <span className="ml-1 font-medium" data-testid={`cost-outsource-${order.id}`}>
                             ETB {parseFloat(order.actualOutsourceCost || '0').toFixed(0)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Parts:</span>
+                          <span className="ml-1 font-medium" data-testid={`cost-parts-${order.id}`}>
+                            ETB {parseFloat(order.actualSparePartsCost || '0').toFixed(0)}
                           </span>
                         </div>
                       </div>
