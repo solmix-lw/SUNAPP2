@@ -1,0 +1,24 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+INSERT INTO public.workshops (
+    id,
+    garage_id,
+    name,
+    foreman_id,
+    description,
+    is_active,
+    created_at,
+    monthly_target,
+    q1_target,
+    q2_target,
+    q3_target,
+    q4_target,
+    annual_target
+) VALUES
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Machine Maintenance Shop', NULL, 'Handles repair, servicing, and calibration of various mechanical machines to ensure optimal performance and reduce downtime.', TRUE, NOW(), 15000, 45000, 47000, 49000, 52000, 200000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Body Maintenance Shop', NULL, 'Performs bodywork repairs, painting, and restoration of vehicles and equipment to maintain appearance and structural integrity.', TRUE, NOW(), 12000, 38000, 40000, 43000, 45000, 166000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Welding Maintenance Shop', NULL, 'Carries out fabrication, welding, and metal joining work for equipment repair and structural maintenance.', TRUE, NOW(), 10000, 32000, 34000, 36000, 38000, 140000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Electric Maintenance Shop', NULL, 'Responsible for diagnosing, repairing, and maintaining electrical systems, wiring, and components in machines and facilities.', TRUE, NOW(), 13000, 40000, 42000, 44000, 46000, 172000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Light Duty Maintenance Shop', NULL, 'Provides regular service, inspection, and repair for light-duty vehicles such as pickups, cars, and small trucks.', TRUE, NOW(), 11000, 34000, 36000, 38000, 40000, 150000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Heavy Duty Maintenance Shop', NULL, 'Specializes in maintenance and overhaul of heavy vehicles and equipment like trucks, loaders, and bulldozers.', TRUE, NOW(), 18000, 52000, 54000, 56000, 58000, 220000),
+    (gen_random_uuid(), '30dcf50c-298d-427a-a1e4-235818da6981', 'Earth Moving Machine Maintenance Shop', NULL, 'Focuses on servicing and repairing earth-moving machinery such as excavators, graders, and backhoes used in construction and mining.', TRUE, NOW(), 20000, 60000, 62000, 64000, 66000, 252000);
