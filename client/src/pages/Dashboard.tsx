@@ -20,7 +20,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { TrendingUp, DollarSign, CheckCircle, AlertCircle, Users, Wrench, Calendar, Filter } from "lucide-react";
+import { TrendingUp, DollarSign, CheckCircle, AlertCircle, Users, Wrench, Calendar, Filter, Package } from "lucide-react";
 import { format } from "date-fns";
 import CostDrilldownDialog from "@/components/CostDrilldownDialog";
 import { getFiscalQuarterRange } from "@shared/fiscal";
@@ -32,7 +32,7 @@ export default function Dashboard() {
   const [timePeriod, setTimePeriod] = useState<string>("annual");
   const [workshopId, setWorkshopId] = useState<string>("all");
   const [year, setYear] = useState<number>(new Date().getFullYear());
-  
+
   // Cost drill-down state
   const [drilldownOpen, setDrilldownOpen] = useState(false);
   const [drilldownContext, setDrilldownContext] = useState<{
@@ -44,12 +44,12 @@ export default function Dashboard() {
     value: null,
     label: null,
   });
-  
+
   // Date range state
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [useCustomRange, setUseCustomRange] = useState<boolean>(false);
-  
+
   // Daily/Weekly specific date selectors
   const [dailyDate, setDailyDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [weekStartDate, setWeekStartDate] = useState<string>(() => {
@@ -64,12 +64,12 @@ export default function Dashboard() {
   // Build query params based on whether using custom range or predefined period
   const buildQueryParams = () => {
     let params = `workshopId=${workshopId}`;
-    
+
     if (useCustomRange && startDate && endDate) {
       params += `&startDate=${startDate}&endDate=${endDate}&timePeriod=custom`;
     } else {
       params += `&timePeriod=${timePeriod}&year=${year}`;
-      
+
       // Add date-specific params for daily/weekly
       if (timePeriod === 'daily') {
         params += `&date=${dailyDate}`;
@@ -77,10 +77,10 @@ export default function Dashboard() {
         params += `&weekStart=${weekStartDate}`;
       }
     }
-    
+
     return params;
   };
-  
+
   // Fetch dashboard analytics data
   const { data: analyticsData, isLoading } = useQuery({
     queryKey: [`/api/dashboard/analytics?${buildQueryParams()}`],
@@ -98,6 +98,7 @@ export default function Dashboard() {
     labor: { planned: 0, actual: 0 },
     lubricants: { planned: 0, actual: 0 },
     outsource: { planned: 0, actual: 0 },
+    spareParts: { planned: 0, actual: 0 },
     totalMaintenanceCost: 0,
     avgCostPerWorkOrder: 0,
     costVariancePct: 0,
@@ -113,11 +114,11 @@ export default function Dashboard() {
 
   const costBreakdown = analyticsData?.costBreakdown
     ? [
-        { name: "Direct Maintenance", value: analyticsData.costBreakdown.directMaintenance, color: "#2563eb" },
-        { name: "Overtime", value: analyticsData.costBreakdown.overtime, color: "#7c3aed" },
-        { name: "Outsource", value: analyticsData.costBreakdown.outsource, color: "#dc2626" },
-        { name: "Overhead (30%)", value: analyticsData.costBreakdown.overhead, color: "#f59e0b" },
-      ]
+      { name: "Direct Maintenance", value: analyticsData.costBreakdown.directMaintenance, color: "#2563eb" },
+      { name: "Overtime", value: analyticsData.costBreakdown.overtime, color: "#7c3aed" },
+      { name: "Outsource", value: analyticsData.costBreakdown.outsource, color: "#dc2626" },
+      { name: "Overhead (30%)", value: analyticsData.costBreakdown.overhead, color: "#f59e0b" },
+    ]
     : [];
 
   const quarterlyData = analyticsData?.quarterlyData || [];
@@ -394,89 +395,103 @@ export default function Dashboard() {
             <div className="mt-6">
               <h2 className="text-lg font-semibold mb-4">Cost Analytics</h2>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Labor Cost</CardTitle>
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold text-primary" data-testid="text-labor-cost">
-                          ETB {(costAnalytics.labor.actual / 1000).toFixed(1)}K
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Planned: ETB {(costAnalytics.labor.planned / 1000).toFixed(1)}K
-                        </p>
-                      </CardContent>
-                    </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Labor Cost</CardTitle>
+                    <Users className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-primary" data-testid="text-labor-cost">
+                      ETB {(costAnalytics.labor.actual / 1000).toFixed(1)}K
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Planned: ETB {(costAnalytics.labor.planned / 1000).toFixed(1)}K
+                    </p>
+                  </CardContent>
+                </Card>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Lubricant Cost</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold text-primary" data-testid="text-lubricant-cost">
-                          ETB {(costAnalytics.lubricants.actual / 1000).toFixed(1)}K
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Planned: ETB {(costAnalytics.lubricants.planned / 1000).toFixed(1)}K
-                        </p>
-                      </CardContent>
-                    </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Lubricant Cost</CardTitle>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-primary" data-testid="text-lubricant-cost">
+                      ETB {(costAnalytics.lubricants.actual / 1000).toFixed(1)}K
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Planned: ETB {(costAnalytics.lubricants.planned / 1000).toFixed(1)}K
+                    </p>
+                  </CardContent>
+                </Card>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Outsource Cost</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold text-primary" data-testid="text-outsource-cost">
-                          ETB {(costAnalytics.outsource.actual / 1000).toFixed(1)}K
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Planned: ETB {(costAnalytics.outsource.planned / 1000).toFixed(1)}K
-                        </p>
-                      </CardContent>
-                    </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Outsource Cost</CardTitle>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-primary" data-testid="text-outsource-cost">
+                      ETB {(costAnalytics.outsource.actual / 1000).toFixed(1)}K
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Planned: ETB {(costAnalytics.outsource.planned / 1000).toFixed(1)}K
+                    </p>
+                  </CardContent>
+                </Card>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Avg Cost/Order</CardTitle>
-                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                      </CardHeader>
-                      <CardContent>
-                        <div className="text-2xl font-bold" data-testid="text-avg-cost-per-order">
-                          ETB {(costAnalytics.avgCostPerWorkOrder / 1000).toFixed(1)}K
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Per completed order
-                        </p>
-                      </CardContent>
-                    </Card>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Spare Part Cost</CardTitle>
+                    <Package className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-primary" data-testid="text-spare-parts-cost">
+                      ETB {((costAnalytics.spareParts?.actual || 0) / 1000).toFixed(1)}K
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Planned: ETB {((costAnalytics.spareParts?.planned || 0) / 1000).toFixed(1)}K
+                    </p>
+                  </CardContent>
+                </Card>
 
-                    <Card>
-                      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Cost Variance</CardTitle>
-                        {costAnalytics.costVariancePct > 0 ? (
-                          <TrendingUp className="h-4 w-4 text-destructive" data-testid="icon-variance-up" />
-                        ) : (
-                          <TrendingUp className="h-4 w-4 text-green-600" data-testid="icon-variance-down" />
-                        )}
-                      </CardHeader>
-                      <CardContent>
-                        <div className={`text-2xl font-bold ${
-                          costAnalytics.costVariancePct > 0 ? 'text-destructive' : 'text-green-600'
-                        }`} data-testid="text-cost-variance">
-                          {costAnalytics.costVariancePct > 0 ? '+' : ''}
-                          {costAnalytics.costVariancePct.toFixed(1)}%
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {costAnalytics.costVariancePct > 0 ? 'Over' : 'Under'} budget
-                        </p>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </div>
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Avg Cost/Order</CardTitle>
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold" data-testid="text-avg-cost-per-order">
+                      ETB {(costAnalytics.avgCostPerWorkOrder / 1000).toFixed(1)}K
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Per completed order
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+                    <CardTitle className="text-sm font-medium">Cost Variance</CardTitle>
+                    {costAnalytics.costVariancePct > 0 ? (
+                      <TrendingUp className="h-4 w-4 text-destructive" data-testid="icon-variance-up" />
+                    ) : (
+                      <TrendingUp className="h-4 w-4 text-green-600" data-testid="icon-variance-down" />
+                    )}
+                  </CardHeader>
+                  <CardContent>
+                    <div className={`text-2xl font-bold ${costAnalytics.costVariancePct > 0 ? 'text-destructive' : 'text-green-600'
+                      }`} data-testid="text-cost-variance">
+                      {costAnalytics.costVariancePct > 0 ? '+' : ''}
+                      {costAnalytics.costVariancePct.toFixed(1)}%
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {costAnalytics.costVariancePct > 0 ? 'Over' : 'Under'} budget
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
 
             {/* Cost Charts - Task 8 */}
             <div className="mt-6">
@@ -489,7 +504,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                      <LineChart 
+                      <LineChart
                         data={costCharts.monthlyTrends}
                         onClick={(data) => {
                           if (data && data.activePayload && data.activePayload[0]) {
@@ -504,8 +519,8 @@ export default function Dashboard() {
                         }}
                       >
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                        <XAxis 
-                          dataKey="month" 
+                        <XAxis
+                          dataKey="month"
                           className="text-xs"
                           angle={-45}
                           textAnchor="end"
@@ -520,27 +535,27 @@ export default function Dashboard() {
                           }}
                         />
                         <Legend />
-                        <Line 
-                          type="monotone" 
-                          dataKey="laborActual" 
-                          stroke="#2563eb" 
-                          name="Labor" 
+                        <Line
+                          type="monotone"
+                          dataKey="laborActual"
+                          stroke="#2563eb"
+                          name="Labor"
                           strokeWidth={2}
                           data-testid="line-labor-trend"
                         />
-                        <Line 
-                          type="monotone" 
-                          dataKey="lubricantActual" 
-                          stroke="#10b981" 
-                          name="Lubricants" 
+                        <Line
+                          type="monotone"
+                          dataKey="lubricantActual"
+                          stroke="#10b981"
+                          name="Lubricants"
                           strokeWidth={2}
                           data-testid="line-lubricant-trend"
                         />
-                        <Line 
-                          type="monotone" 
-                          dataKey="outsourceActual" 
-                          stroke="#f59e0b" 
-                          name="Outsource" 
+                        <Line
+                          type="monotone"
+                          dataKey="outsourceActual"
+                          stroke="#f59e0b"
+                          name="Outsource"
                           strokeWidth={2}
                           data-testid="line-outsource-trend"
                         />
@@ -566,7 +581,7 @@ export default function Dashboard() {
                           cx="50%"
                           cy="50%"
                           labelLine={false}
-                          label={({ name, percent }) => 
+                          label={({ name, percent }) =>
                             percent > 0 ? `${name}: ${(percent * 100).toFixed(0)}%` : null
                           }
                           outerRadius={80}
@@ -608,7 +623,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                      <BarChart 
+                      <BarChart
                         data={costCharts.byEquipmentType}
                         layout="vertical"
                         margin={{ left: 100 }}
@@ -626,9 +641,9 @@ export default function Dashboard() {
                       >
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                         <XAxis type="number" className="text-xs" />
-                        <YAxis 
-                          dataKey="name" 
-                          type="category" 
+                        <YAxis
+                          dataKey="name"
+                          type="category"
                           className="text-xs"
                           width={90}
                         />
@@ -639,9 +654,9 @@ export default function Dashboard() {
                             borderRadius: "var(--radius)",
                           }}
                         />
-                        <Bar 
-                          dataKey="value" 
-                          fill="#2563eb" 
+                        <Bar
+                          dataKey="value"
+                          fill="#2563eb"
                           name="Total Cost (ETB)"
                           data-testid="bar-equipment-type"
                         />
@@ -657,7 +672,7 @@ export default function Dashboard() {
                   </CardHeader>
                   <CardContent>
                     <ResponsiveContainer width="100%" height={300}>
-                      <BarChart 
+                      <BarChart
                         data={costCharts.byGarage}
                         layout="vertical"
                         margin={{ left: 100 }}
@@ -675,9 +690,9 @@ export default function Dashboard() {
                       >
                         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                         <XAxis type="number" className="text-xs" />
-                        <YAxis 
-                          dataKey="name" 
-                          type="category" 
+                        <YAxis
+                          dataKey="name"
+                          type="category"
                           className="text-xs"
                           width={90}
                         />
@@ -688,9 +703,9 @@ export default function Dashboard() {
                             borderRadius: "var(--radius)",
                           }}
                         />
-                        <Bar 
-                          dataKey="value" 
-                          fill="#10b981" 
+                        <Bar
+                          dataKey="value"
+                          fill="#10b981"
                           name="Total Cost (ETB)"
                           data-testid="bar-garage"
                         />

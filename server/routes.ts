@@ -7852,6 +7852,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       let totalActualLubricantCost = 0;
       let totalPlannedOutsourceCost = 0;
       let totalActualOutsourceCost = 0;
+      let totalPlannedSparePartsCost = 0;
+      let totalActualSparePartsCost = 0;
       let totalPlannedCostNew = 0;
       let totalActualCostNew = 0;
 
@@ -7873,6 +7875,53 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         totalActualOutsourceCost += actualOutsource;
         totalPlannedCostNew += totalPlanned;
         totalActualCostNew += totalActual;
+      }
+
+      // Calculate spare parts costs from parts receipts
+      const { partsReceipts } = await import("@shared/schema");
+      const completedWorkOrderIds = completedOrders.map(o => o.id);
+
+      if (completedWorkOrderIds.length > 0) {
+        // Fetch all parts receipts for completed work orders
+        const receipts = await db
+          .select({
+            workOrderId: partsReceipts.workOrderId,
+            sparePartId: partsReceipts.sparePartId,
+            quantityIssued: partsReceipts.quantityIssued,
+          })
+          .from(partsReceipts)
+          .where(inArray(partsReceipts.workOrderId, completedWorkOrderIds));
+
+        // Get unique spare part IDs
+        const sparePartIds = [...new Set(receipts.map(r => r.sparePartId).filter(Boolean))];
+
+        if (sparePartIds.length > 0) {
+          // Fetch spare parts prices
+          const parts = await db
+            .select({
+              id: spareParts.id,
+              price: spareParts.price,
+            })
+            .from(spareParts)
+            .where(inArray(spareParts.id, sparePartIds));
+
+          // Create a map of part ID to price
+          const partPriceMap = new Map();
+          parts.forEach(p => {
+            if (p.price) {
+              partPriceMap.set(p.id, parseFloat(p.price));
+            }
+          });
+
+          // Calculate total spare parts cost
+          for (const receipt of receipts) {
+            if (receipt.sparePartId && partPriceMap.has(receipt.sparePartId)) {
+              const price = partPriceMap.get(receipt.sparePartId);
+              const cost = price * (receipt.quantityIssued || 0);
+              totalActualSparePartsCost += cost;
+            }
+          }
+        }
       }
 
       // Calculate derived metrics
@@ -8174,6 +8223,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           outsource: {
             planned: parseFloat(totalPlannedOutsourceCost.toFixed(2)),
             actual: parseFloat(totalActualOutsourceCost.toFixed(2)),
+          },
+          spareParts: {
+            planned: parseFloat(totalPlannedSparePartsCost.toFixed(2)),
+            actual: parseFloat(totalActualSparePartsCost.toFixed(2)),
           },
           totalMaintenanceCost: parseFloat(totalMaintenanceCost.toFixed(2)),
           avgCostPerWorkOrder: parseFloat(avgCostPerWorkOrder.toFixed(2)),
