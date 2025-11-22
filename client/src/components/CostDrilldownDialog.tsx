@@ -263,6 +263,37 @@ export default function CostDrilldownDialog({
                           </span>
                         </div>
                       </div>
+
+                      {/* Itemized Parts List - Only show when drilling down into Spare Parts */}
+                      {context.type === 'costType' && context.value === 'spareParts' && order.partsUsed && order.partsUsed.length > 0 && (
+                        <div className="mt-3 pt-3 border-t">
+                          <p className="text-xs font-semibold mb-2 text-muted-foreground">Parts Used:</p>
+                          <div className="bg-muted/30 rounded-md overflow-hidden">
+                            <table className="w-full text-xs">
+                              <thead className="bg-muted/50">
+                                <tr>
+                                  <th className="px-2 py-1 text-left font-medium text-muted-foreground">Part Name</th>
+                                  <th className="px-2 py-1 text-left font-medium text-muted-foreground">P/N</th>
+                                  <th className="px-2 py-1 text-right font-medium text-muted-foreground">Qty</th>
+                                  <th className="px-2 py-1 text-right font-medium text-muted-foreground">Cost</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {order.partsUsed.map((part: any, idx: number) => (
+                                  <tr key={idx} className="border-t border-muted/50">
+                                    <td className="px-2 py-1">{part.name}</td>
+                                    <td className="px-2 py-1 text-muted-foreground">{part.partNumber}</td>
+                                    <td className="px-2 py-1 text-right">{part.quantity}</td>
+                                    <td className="px-2 py-1 text-right font-medium">
+                                      {parseFloat(part.totalCost).toFixed(0)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

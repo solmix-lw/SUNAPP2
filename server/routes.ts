@@ -3399,37 +3399,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         if (partIds.length > 0) {
           const parts = await db
-            .select({ id: spareParts.id, price: spareParts.price })
+            .select({
+              id: spareParts.id,
+              price: spareParts.price,
+              name: spareParts.name,
+              partNumber: spareParts.partNumber
+            })
             .from(spareParts)
             .where(inArray(spareParts.id, partIds));
 
           parts.forEach(p => {
-            if (p.price) partPrices.set(p.id, parseFloat(p.price));
+            if (p.price) {
+              partPrices.set(p.id, {
+                price: parseFloat(p.price),
+                name: p.name,
+                partNumber: p.partNumber
+              });
+            }
           });
         }
 
-        // Calculate costs per work order
+        // Calculate costs per work order and build parts list
         const sparePartsCosts = new Map();
+        const partsUsedMap = new Map();
+
         receipts.forEach(r => {
           if (r.workOrderId && r.sparePartId) {
-            const price = partPrices.get(r.sparePartId) || 0;
+            const partInfo = partPrices.get(r.sparePartId);
+            const price = partInfo?.price || 0;
             const cost = price * (r.quantityIssued || 0);
+
+            // Update total cost
             const current = sparePartsCosts.get(r.workOrderId) || 0;
             sparePartsCosts.set(r.workOrderId, current + cost);
+
+            // Add to parts list
+            if (!partsUsedMap.has(r.workOrderId)) {
+              partsUsedMap.set(r.workOrderId, []);
+            }
+            partsUsedMap.get(r.workOrderId).push({
+              name: partInfo?.name || 'Unknown Part',
+              partNumber: partInfo?.partNumber || 'N/A',
+              quantity: r.quantityIssued || 0,
+              unitCost: price,
+              totalCost: cost
+            });
           }
         });
 
-        // Merge costs into results
+        // Merge costs and parts list into results
         const enrichedResults = results.map(order => {
           const sparePartCost = sparePartsCosts.get(order.id) || 0;
           const currentTotal = parseFloat(order.totalActualCost || '0');
+          const partsUsed = partsUsedMap.get(order.id) || [];
 
           // If totalActualCost doesn't include spare parts (which it doesn't in current schema),
           // we should add it for the display
           return {
             ...order,
             actualSparePartsCost: sparePartCost.toString(),
-            totalActualCost: (currentTotal + sparePartCost).toString()
+            totalActualCost: (currentTotal + sparePartCost).toString(),
+            partsUsed // Attach itemized parts list
           };
         });
 
