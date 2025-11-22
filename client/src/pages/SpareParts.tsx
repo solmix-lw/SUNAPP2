@@ -345,7 +345,7 @@ export default function SparePartsPage() {
           category: row["Category*"] || "",
           description: row["Description"] || null,
           price: row["Price"] ? String(row["Price"]) : null,
-          stockQuantity: row["Stock Quantity"] ? Number(row["Stock Quantity"]) : 0,
+          stockQuantity: row["Stock Quantity"] ? Math.floor(Number(row["Stock Quantity"])) : 0,
           locationInstructions: row["Location Instructions"] || null,
           stockStatus: "in_stock", // Default
         }));

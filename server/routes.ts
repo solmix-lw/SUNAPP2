@@ -805,7 +805,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               row.stockQuantity !== undefined &&
               row.stockQuantity !== null &&
               row.stockQuantity !== "";
-            const numericStock = hasStockValue ? Number(row.stockQuantity) : 0;
+            const numericStock = hasStockValue ? Math.floor(Number(row.stockQuantity)) : 0;
 
             return {
               ...row,
