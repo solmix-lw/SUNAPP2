@@ -8,8 +8,8 @@ import { setupAuth } from "./auth";
 import { seedProductionUsers } from "./seed-production";
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: false, limit: '5mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: false, limit: '50mb' }));
 
 // Setup authentication before routes
 setupAuth(app);
@@ -55,12 +55,12 @@ app.use((req, res, next) => {
   // Load deployment settings from database
   let deploymentHost = process.env.HOST || "0.0.0.0";
   let deploymentPort = parseInt(process.env.PORT || '5000', 10);
-  
+
   try {
     const { db } = await import("./db");
     const { systemSettings } = await import("@shared/schema");
     const settings = await db.select().from(systemSettings).limit(1);
-    
+
     // Environment variables override database settings
     if (!process.env.HOST && settings.length > 0 && settings[0].serverHost) {
       deploymentHost = settings[0].serverHost;
@@ -68,7 +68,7 @@ app.use((req, res, next) => {
     if (!process.env.PORT && settings.length > 0 && settings[0].serverPort) {
       deploymentPort = settings[0].serverPort;
     }
-    
+
     if (process.env.HOST || process.env.PORT) {
       log(`Using environment variables: ${deploymentHost}:${deploymentPort}`);
     } else if (settings.length > 0 && settings[0].serverHost && settings[0].serverPort) {
@@ -95,7 +95,7 @@ app.use((req, res, next) => {
   // doesn't interfere with the other routes
   const env = app.get("env");
   log(`Environment: ${env} (NODE_ENV=${process.env.NODE_ENV})`);
-  
+
   if (env === "development") {
     log("Starting Vite dev server...");
     await setupVite(app, server);
@@ -110,13 +110,13 @@ app.use((req, res, next) => {
   // In production deployment, you can configure custom host and port via Admin Settings
   const port = deploymentPort;
   const host = deploymentHost;
-  
+
   // reusePort is not supported on Windows, so only use it on Linux/Mac
   const isWindows = process.platform === 'win32';
-  const listenOptions = isWindows 
+  const listenOptions = isWindows
     ? { port, host }
     : { port, host, reusePort: true };
-  
+
   server.listen(listenOptions, () => {
     log(`serving on ${host}:${port}`);
   });

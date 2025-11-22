@@ -781,6 +781,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Import spare parts from Excel (or JSON preview)
+  // Import spare parts from Excel (or JSON preview)
   app.post("/api/parts/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
     try {
       let partsToImport: any[] = [];
@@ -840,30 +841,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let skipped = 0;
         const errors: any[] = [];
 
-        for (const part of partsToImport) {
-          try {
-            // Check if part exists by partNumber
-            const existing = await tx.query.spareParts.findFirst({
-              where: eq(spareParts.partNumber, part.partNumber),
+        // Optimization: Bulk fetch existing parts
+        // We'll fetch in chunks if the list is huge, but for ~2000 items, fetching IDs/PartNumbers is fine.
+        // However, to be safe with query parameters limits, we'll chunk the lookups.
+
+        const partNumbers = partsToImport.map((p: any) => p.partNumber).filter(Boolean);
+        const existingMap = new Map();
+
+        // Fetch existing parts in chunks of 500
+        for (let i = 0; i < partNumbers.length; i += 500) {
+          const chunk = partNumbers.slice(i, i + 500);
+          if (chunk.length > 0) {
+            const existingParts = await tx.query.spareParts.findMany({
+              where: inArray(spareParts.partNumber, chunk)
             });
 
-            if (existing) {
-              await tx.update(spareParts)
-                .set(part)
-                .where(eq(spareParts.id, existing.id));
-              updated++;
-            } else {
-              await tx.insert(spareParts).values(part);
-              created++;
-            }
-          } catch (error) {
-            skipped++;
-            errors.push({
-              partNumber: part.partNumber,
-              error: error instanceof Error ? error.message : 'Import error',
+            existingParts.forEach((p: any) => {
+              existingMap.set(p.partNumber, p);
             });
           }
         }
+
+        const toInsert: any[] = [];
+        const toUpdate: any[] = [];
+
+        for (const part of partsToImport) {
+          if (existingMap.has(part.partNumber)) {
+            const existing = existingMap.get(part.partNumber);
+            toUpdate.push({ ...part, id: existing.id });
+          } else {
+            toInsert.push(part);
+          }
+        }
+
+        // Bulk Insert
+        if (toInsert.length > 0) {
+          try {
+            // Insert in chunks of 100
+            for (let i = 0; i < toInsert.length; i += 100) {
+              const chunk = toInsert.slice(i, i + 100);
+              await tx.insert(spareParts).values(chunk);
+              created += chunk.length;
+            }
+          } catch (error) {
+            console.error("Bulk insert error:", error);
+            // Fallback to individual inserts
+            for (const item of toInsert) {
+              try {
+                await tx.insert(spareParts).values(item);
+                created++;
+              } catch (e) {
+                skipped++;
+                errors.push({
+                  partNumber: item.partNumber,
+                  error: e instanceof Error ? e.message : 'Insert error',
+                });
+              }
+            }
+          }
+        }
+
+        // Parallel Updates
+        // We can't easily bulk update with different values in SQL without complex queries,
+        // so we'll use Promise.all with concurrency limit or just simple Promise.all for now (2000 is manageable in parallel for simple updates, but let's chunk it to be safe)
+
+        // Process updates in chunks of 50 to avoid overwhelming the DB connection pool
+        for (let i = 0; i < toUpdate.length; i += 50) {
+          const chunk = toUpdate.slice(i, i + 50);
+          await Promise.all(chunk.map(async (item: any) => {
+            try {
+              const { id, ...data } = item;
+              await tx.update(spareParts)
+                .set(data)
+                .where(eq(spareParts.id, id));
+              updated++;
+            } catch (error) {
+              skipped++;
+              errors.push({
+                partNumber: item.partNumber,
+                error: error instanceof Error ? error.message : 'Update error',
+              });
+            }
+          }));
+        }
+
         return { created, updated, skipped, errors };
       });
 

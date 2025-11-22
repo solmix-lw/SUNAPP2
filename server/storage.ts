@@ -207,7 +207,7 @@ export interface IStorage {
   // Operating Behavior Reports
   getOperatingReportsByEquipment(equipmentId: string): Promise<OperatingBehaviorReport[]>;
   createOperatingReport(data: InsertOperatingBehaviorReport): Promise<OperatingBehaviorReport>;
-  
+
   // User operations
   updateUserLanguage(userId: string, language: string): Promise<void>;
 
@@ -261,7 +261,7 @@ export interface IStorage {
   getSupervisorPendingWorkOrders(): Promise<WorkOrderWithDetails[]>;
   approveSupervisorSignoff(workOrderId: string, supervisorId: string, notes?: string): Promise<void>;
   rejectSupervisorSignoff(workOrderId: string, supervisorId: string, rejectionNotes: string): Promise<void>;
-  
+
   // Work Order Required Parts
   getWorkOrderRequiredParts(workOrderId: string): Promise<WorkOrderRequiredPart[]>;
   replaceWorkOrderRequiredParts(workOrderId: string, parts: InsertWorkOrderRequiredPart[]): Promise<void>;
@@ -310,16 +310,16 @@ export interface IStorage {
   getReceptionsByPrefix(prefix: string): Promise<EquipmentReception[]>;
   createReception(data: InsertEquipmentReception): Promise<EquipmentReception>;
   updateReception(id: string, data: Partial<InsertEquipmentReception>): Promise<EquipmentReception>;
-  
+
   // Reception Checklists (Templates)
   getChecklistTemplates(filters?: { equipmentType?: string; role?: string }): Promise<ReceptionChecklist[]>;
   createChecklistTemplate(data: InsertReceptionChecklist): Promise<ReceptionChecklist>;
-  
+
   // Inspection Items
   getInspectionItemsByReception(receptionId: string): Promise<ReceptionInspectionItem[]>;
   createInspectionItem(data: InsertReceptionInspectionItem): Promise<ReceptionInspectionItem>;
   createBulkInspectionItems(items: InsertReceptionInspectionItem[]): Promise<ReceptionInspectionItem[]>;
-  
+
   // Equipment Inspections
   getInspectionById(id: string): Promise<EquipmentInspection | undefined>;
   getInspectionByReceptionId(receptionId: string): Promise<EquipmentInspection | undefined>;
@@ -331,7 +331,7 @@ export interface IStorage {
   createInspection(data: InsertEquipmentInspection): Promise<EquipmentInspection>;
   updateInspection(id: string, data: Partial<InsertEquipmentInspection>): Promise<EquipmentInspection>;
   cancelReception(receptionId: string): Promise<void>;
-  
+
   // Inspection Checklist Items
   getChecklistItemsByInspection(inspectionId: string): Promise<InspectionChecklistItem[]>;
   createChecklistItem(data: InsertInspectionChecklistItem): Promise<InspectionChecklistItem>;
@@ -339,11 +339,11 @@ export interface IStorage {
   updateChecklistItem(id: string, data: Partial<InsertInspectionChecklistItem>): Promise<InspectionChecklistItem>;
   deleteChecklistItemsByInspection(inspectionId: string): Promise<void>;
   upsertChecklistItems(inspectionId: string, items: InsertInspectionChecklistItem[]): Promise<InspectionChecklistItem[]>;
-  
+
   // Damage Reports
   getDamageReportsByReception(receptionId: string): Promise<DamageReport[]>;
   createDamageReport(data: InsertDamageReport): Promise<DamageReport>;
-  
+
   // Repair Estimates
   getRepairEstimateByReception(receptionId: string): Promise<RepairEstimate | undefined>;
   createRepairEstimate(data: InsertRepairEstimate): Promise<RepairEstimate>;
@@ -356,14 +356,14 @@ export interface IStorage {
   getPartsRequestsByWorkOrder(workOrderId: string): Promise<PartsRequest[]>;
   createPartsRequest(data: InsertPartsRequest): Promise<PartsRequest>;
   updatePartsRequest(id: string, data: Partial<InsertPartsRequest>): Promise<PartsRequest>;
-  
+
   // Approvals
   getAllApprovals(filters?: { status?: string; assignedToId?: string; approvalType?: string }): Promise<ApprovalWithDetails[]>;
   getApprovalById(id: string): Promise<ApprovalWithDetails | undefined>;
   getPendingApprovalsByEmployee(employeeId: string): Promise<ApprovalWithDetails[]>;
   createApproval(data: InsertApproval): Promise<Approval>;
   updateApproval(id: string, data: Partial<InsertApproval>): Promise<Approval>;
-  
+
   // Approval Actions
   approveWorkOrder(workOrderId: string, approvedById: string, notes?: string): Promise<void>;
   rejectWorkOrder(workOrderId: string, approvedById: string, notes?: string): Promise<void>;
@@ -379,7 +379,7 @@ export interface IStorage {
   rejectItemRequisitionByForeman(requisitionId: string, foremanId: string, remarks?: string): Promise<void>;
   approveItemRequisitionByStoreManager(requisitionId: string, storeManagerId: string, remarks?: string): Promise<void>;
   rejectItemRequisitionByStoreManager(requisitionId: string, storeManagerId: string, remarks?: string): Promise<void>;
-  processItemRequisitionLineDecisions(requisitionId: string, storeManagerId: string, lineDecisions: Array<{lineId: string; action: 'approve' | 'reject' | 'backorder'; quantityApproved?: number; remarks?: string}>, generalRemarks?: string): Promise<void>;
+  processItemRequisitionLineDecisions(requisitionId: string, storeManagerId: string, lineDecisions: Array<{ lineId: string; action: 'approve' | 'reject' | 'backorder'; quantityApproved?: number; remarks?: string }>, generalRemarks?: string): Promise<void>;
   getPurchaseRequests(): Promise<any[]>;
   confirmPartsReceipt(requisitionId: string, teamMemberId: string): Promise<void>;
   markWorkComplete(workOrderId: string, teamMemberId: string): Promise<void>;
@@ -408,13 +408,13 @@ export interface IStorage {
   // System Settings Operations
   getSystemSettings(): Promise<SystemSettings | undefined>;
   saveSystemSettings(data: InsertSystemSettings, updatedById: string): Promise<SystemSettings>;
-  
+
   // Employee Page Permissions Operations
   getEmployeePagePermissions(employeeId: string): Promise<EmployeePagePermission[]>;
   getAllPagePermissions(): Promise<EmployeePagePermission[]>;
   setEmployeePagePermission(data: InsertEmployeePagePermission): Promise<EmployeePagePermission>;
   removeEmployeePagePermission(employeeId: string, pagePath: string): Promise<boolean>;
-  
+
   // Items (D365) Operations
   getAllItems(): Promise<Item[]>;
   getItemById(id: string): Promise<Item | undefined>;
@@ -422,7 +422,7 @@ export interface IStorage {
   createItem(data: InsertItem): Promise<Item>;
   updateItem(id: string, data: Partial<InsertItem>): Promise<Item>;
   deleteItem(id: string): Promise<void>;
-  
+
   // MellaTech Fleet Tracking Operations
   syncMellaTechVehicles(vehiclesData: any[]): Promise<void>;
   getAllMellaTechVehicles(): Promise<any[]>;
@@ -434,7 +434,7 @@ export interface IStorage {
   getMellaTechAlerts(options?: { unreadOnly?: boolean; limit?: number }): Promise<any[]>;
   markAlertAsRead(alertId: string): Promise<void>;
   createMellaTechAlert(data: any): Promise<any>;
-  
+
   // Ethiopian Calendar Year Management Operations
   closeEthiopianYear(closedByEmployeeId: string, notes?: string): Promise<YearClosureLog>;
   getYearClosureLogs(): Promise<YearClosureLog[]>;
@@ -610,7 +610,7 @@ export class DatabaseStorage implements IStorage {
     if (data.stockQuantity !== undefined && data.stockQuantity !== null) {
       data.stockStatus = this.calculateStockStatus(data.stockQuantity);
     }
-    
+
     const [result] = await db.insert(spareParts).values(data).returning();
 
     if (compatibility && compatibility.length > 0) {
@@ -625,7 +625,7 @@ export class DatabaseStorage implements IStorage {
     if (data.stockQuantity !== undefined && data.stockQuantity !== null) {
       data.stockStatus = this.calculateStockStatus(data.stockQuantity);
     }
-    
+
     const [result] = await db
       .update(spareParts)
       .set(data)
@@ -663,10 +663,10 @@ export class DatabaseStorage implements IStorage {
   async addPartImages(id: string, newImageUrls: string[]): Promise<SparePart | undefined> {
     const part = await this.getPartById(id);
     if (!part) return undefined;
-    
+
     const existingUrls = part.imageUrls || [];
     const updatedUrls = [...existingUrls, ...newImageUrls];
-    
+
     const [result] = await db
       .update(spareParts)
       .set({ imageUrls: updatedUrls })
@@ -753,13 +753,21 @@ export class DatabaseStorage implements IStorage {
       .from(spareParts)
       .where(whereClause);
 
-    // Fetch items with pagination
-    const items = await db
+    // Fetch items with pagination (no default limit - return all if not specified)
+    let query = db
       .select()
       .from(spareParts)
-      .where(whereClause)
-      .limit(params.limit || 1000)
-      .offset(params.offset || 0);
+      .where(whereClause);
+
+    if (params.limit) {
+      query = query.limit(params.limit);
+    }
+
+    if (params.offset) {
+      query = query.offset(params.offset);
+    }
+
+    const items = await query;
 
     // Ensure correct stock status based on quantity before enriching
     const itemsWithCorrectStatus = items.map(p => this.ensureCorrectStockStatus(p));
@@ -967,7 +975,7 @@ export class DatabaseStorage implements IStorage {
   // Garages
   async getAllGarages(): Promise<GarageWithDetails[]> {
     const allGarages = await db.select().from(garages).orderBy(garages.name);
-    
+
     // Fetch workshops for each garage
     const garagesWithDetails = await Promise.all(
       allGarages.map(async (garage) => {
@@ -980,13 +988,13 @@ export class DatabaseStorage implements IStorage {
         };
       })
     );
-    
+
     return garagesWithDetails;
   }
 
   async getAllWorkshops(): Promise<WorkshopWithDetails[]> {
     const allWorkshops = await db.select().from(workshops).orderBy(workshops.name);
-    
+
     // Fetch details for each workshop
     const workshopsWithDetails = await Promise.all(
       allWorkshops.map(async (workshop) => {
@@ -994,19 +1002,19 @@ export class DatabaseStorage implements IStorage {
         const garage = workshop.garageId
           ? await db.select().from(garages).where(eq(garages.id, workshop.garageId)).limit(1)
           : [];
-        
+
         // Get foreman info
         const foreman = workshop.foremanId
           ? await db.select().from(employees).where(eq(employees.id, workshop.foremanId)).limit(1)
           : [];
-        
+
         // Get team members
         const teamMembers = await db
           .select()
           .from(workshopMembers)
           .innerJoin(employees, eq(workshopMembers.employeeId, employees.id))
           .where(eq(workshopMembers.workshopId, workshop.id));
-        
+
         return {
           ...workshop,
           garage: garage[0] || null,
@@ -1015,7 +1023,7 @@ export class DatabaseStorage implements IStorage {
         };
       })
     );
-    
+
     return workshopsWithDetails;
   }
 
@@ -1026,15 +1034,15 @@ export class DatabaseStorage implements IStorage {
     // Fetch workshops with full details (foreman and members)
     const workshopsList = await this.getWorkshopsByGarage(id);
     const employeesList = await db.select().from(employees).where(eq(employees.garageId, id));
-    
+
     // Fetch work orders for this garage using the junction table
     const garageWorkOrders = await db
       .select({ workOrderId: workOrderGarages.workOrderId })
       .from(workOrderGarages)
       .where(eq(workOrderGarages.garageId, id));
-    
+
     const workOrderIds = garageWorkOrders.map(wo => wo.workOrderId);
-    const orders = workOrderIds.length > 0 
+    const orders = workOrderIds.length > 0
       ? await db.select().from(workOrders).where(inArray(workOrders.id, workOrderIds))
       : [];
 
@@ -1065,10 +1073,10 @@ export class DatabaseStorage implements IStorage {
 
     // Check for dependencies that don't have cascade delete
     const employeesList = await db.select().from(employees).where(eq(employees.garageId, id));
-    
+
     // Check work orders via junction table
     const garageWorkOrderLinks = await db.select().from(workOrderGarages).where(eq(workOrderGarages.garageId, id));
-    
+
     const storageLocations = await db.select().from(partsStorageLocations).where(eq(partsStorageLocations.garageId, id));
     const equipmentLocationsList = await db.select().from(equipmentLocations).where(eq(equipmentLocations.garageId, id));
 
@@ -1092,7 +1100,7 @@ export class DatabaseStorage implements IStorage {
   // Workshops
   async getWorkshopsByGarage(garageId: string): Promise<WorkshopWithDetails[]> {
     const workshopsList = await db.select().from(workshops).where(eq(workshops.garageId, garageId));
-    
+
     const workshopsWithDetails = await Promise.all(
       workshopsList.map(async (workshop) => {
         const [garage] = await db.select().from(garages).where(eq(garages.id, workshop.garageId));
@@ -1100,7 +1108,7 @@ export class DatabaseStorage implements IStorage {
         if (workshop.foremanId) {
           [foreman] = await db.select().from(employees).where(eq(employees.id, workshop.foremanId));
         }
-        
+
         // Get workshop members
         const memberRecords = await db.select().from(workshopMembers).where(eq(workshopMembers.workshopId, workshop.id));
         const membersList = await Promise.all(
@@ -1109,11 +1117,11 @@ export class DatabaseStorage implements IStorage {
             return employee;
           })
         );
-        
+
         return { ...workshop, garage, foreman, members: memberRecords, membersList };
       })
     );
-    
+
     return workshopsWithDetails;
   }
 
@@ -1143,14 +1151,14 @@ export class DatabaseStorage implements IStorage {
 
     // Check for dependencies via junction table
     const workshopWorkOrderLinks = await db.select().from(workOrderWorkshops).where(eq(workOrderWorkshops.workshopId, id));
-    
+
     if (workshopWorkOrderLinks.length > 0) {
       throw new Error("Cannot delete workshop: has active work orders");
     }
 
     // Delete workshop members first (though CASCADE should handle this)
     await db.delete(workshopMembers).where(eq(workshopMembers.workshopId, id));
-    
+
     // Delete the workshop
     await db.delete(workshops).where(eq(workshops.id, id));
   }
@@ -1237,16 +1245,16 @@ export class DatabaseStorage implements IStorage {
   // Employees
   async getAllEmployees(role?: string, garageId?: string): Promise<Employee[]> {
     const conditions = [];
-    
+
     if (role) {
       conditions.push(eq(employees.role, role));
     }
     if (garageId) {
       conditions.push(eq(employees.garageId, garageId));
     }
-    
+
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    
+
     return await db.select().from(employees).where(whereClause).orderBy(employees.fullName);
   }
 
@@ -1277,7 +1285,7 @@ export class DatabaseStorage implements IStorage {
   // Work Orders
   async getAllWorkOrders(filters?: { status?: string; assignedToId?: string; garageId?: string; workshopId?: string; equipmentModel?: string }): Promise<WorkOrderWithDetails[]> {
     const conditions = [];
-    
+
     if (filters?.status) {
       conditions.push(eq(workOrders.status, filters.status));
     }
@@ -1288,23 +1296,23 @@ export class DatabaseStorage implements IStorage {
     if (filters?.garageId) {
       conditions.push(eq(workOrders.garageId, filters.garageId));
     }
-    
+
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
-    
+
     // Determine if we need to join with equipment table for filtering
     const needsEquipmentJoin = !!filters?.equipmentModel;
     const needsWorkshopJoin = !!filters?.workshopId;
-    
+
     let orders;
-    
+
     if (needsEquipmentJoin && needsWorkshopJoin) {
       // Join with both equipment and workshop tables
       const equipmentCondition = eq(equipment.model, filters.equipmentModel!);
       const workshopCondition = eq(workOrderWorkshops.workshopId, filters.workshopId!);
-      const combinedWhere = whereClause 
+      const combinedWhere = whereClause
         ? and(whereClause, equipmentCondition, workshopCondition)
         : and(equipmentCondition, workshopCondition);
-      
+
       const ordersWithJoins = await db
         .select({ workOrder: workOrders })
         .from(workOrders)
@@ -1312,41 +1320,41 @@ export class DatabaseStorage implements IStorage {
         .innerJoin(workOrderWorkshops, eq(workOrders.id, workOrderWorkshops.workOrderId))
         .where(combinedWhere)
         .orderBy(desc(workOrders.createdAt));
-      
+
       orders = ordersWithJoins.map(row => row.workOrder);
     } else if (needsEquipmentJoin) {
       // Join with equipment table only
       const equipmentCondition = eq(equipment.model, filters.equipmentModel!);
-      const combinedWhere = whereClause 
+      const combinedWhere = whereClause
         ? and(whereClause, equipmentCondition)
         : equipmentCondition;
-      
+
       const ordersWithEquipment = await db
         .select({ workOrder: workOrders })
         .from(workOrders)
         .innerJoin(equipment, eq(workOrders.equipmentId, equipment.id))
         .where(combinedWhere)
         .orderBy(desc(workOrders.createdAt));
-      
+
       orders = ordersWithEquipment.map(row => row.workOrder);
     } else if (needsWorkshopJoin) {
       // Join with workshop table only (existing logic)
       const workshopCondition = eq(workOrderWorkshops.workshopId, filters.workshopId);
       const combinedWhere = whereClause ? and(whereClause, workshopCondition) : workshopCondition;
-      
+
       const ordersWithWorkshop = await db
         .select({ workOrder: workOrders })
         .from(workOrders)
         .innerJoin(workOrderWorkshops, eq(workOrders.id, workOrderWorkshops.workOrderId))
         .where(combinedWhere)
         .orderBy(desc(workOrders.createdAt));
-      
+
       orders = ordersWithWorkshop.map(row => row.workOrder);
     } else {
       // No joins needed
       orders = await db.select().from(workOrders).where(whereClause).orderBy(desc(workOrders.createdAt));
     }
-    
+
     if (orders.length === 0) return [];
 
     // Collect all unique IDs for batch fetching (performance optimization)
@@ -1389,7 +1397,7 @@ export class DatabaseStorage implements IStorage {
     const garageMap = new Map(garageList.map((g: any) => [g.id, g]));
     const workshopMap = new Map(workshopList.map((w: any) => [w.id, w]));
     const userMap = new Map(userList.map((u: any) => [u.id, u]));
-    
+
     // Group workshop assignments by work order ID
     const workshopAssignmentsMap = new Map<string, typeof workshopAssignments>();
     for (const assignment of workshopAssignments) {
@@ -1398,7 +1406,7 @@ export class DatabaseStorage implements IStorage {
       }
       workshopAssignmentsMap.get(assignment.workOrderId)!.push(assignment);
     }
-    
+
     // Group required parts by work order ID
     const requiredPartsMap = new Map<string, typeof requiredPartsList>();
     for (const part of requiredPartsList) {
@@ -1428,10 +1436,10 @@ export class DatabaseStorage implements IStorage {
       // Get primary workshop (or first workshop if no primary)
       const orderWorkshops = workshopAssignmentsMap.get(order.id) || [];
       const primaryWorkshop = orderWorkshops.find(w => w.isPrimary) || orderWorkshops[0];
-      
+
       // Get equipment data for this order
       const equipmentData = equipmentMap.get(order.equipmentId);
-      
+
       return {
         ...order,
         equipment: equipmentData,
@@ -1450,7 +1458,7 @@ export class DatabaseStorage implements IStorage {
   async getWorkOrderById(id: string): Promise<WorkOrderWithDetails | undefined> {
     const [order] = await db.select().from(workOrders).where(eq(workOrders.id, id));
     if (!order) return undefined;
-    
+
     const [equipmentData] = await db.select().from(equipment).where(eq(equipment.id, order.equipmentId));
     let garage = undefined;
     if (order.garageId) {
@@ -1460,21 +1468,21 @@ export class DatabaseStorage implements IStorage {
     if (order.workshopId) {
       [workshop] = await db.select().from(workshops).where(eq(workshops.id, order.workshopId));
     }
-    
+
     // Get assigned employees from assignedToIds array
     let assignedToList: Employee[] = [];
     if (order.assignedToIds && order.assignedToIds.length > 0) {
       assignedToList = await db.select().from(employees).where(inArray(employees.id, order.assignedToIds));
     }
-    
+
     let createdBy = undefined;
     if (order.createdById) {
       [createdBy] = await db.select().from(employees).where(eq(employees.id, order.createdById));
     }
-    
+
     // Get required parts
     const requiredParts = await this.getWorkOrderRequiredParts(order.id);
-    
+
     return {
       ...order,
       equipment: equipmentData,
@@ -1501,31 +1509,31 @@ export class DatabaseStorage implements IStorage {
   async createWorkOrder(data: InsertWorkOrder): Promise<WorkOrder> {
     // Auto-generate work order number if not provided
     let workOrderNumber = data.workOrderNumber;
-    
+
     // Retry loop for handling duplicate work order numbers (up to 5 attempts)
     const maxRetries = 5;
     let attempt = 0;
-    
+
     while (attempt < maxRetries) {
       try {
         if (!workOrderNumber || attempt > 0) {
           const currentYear = new Date().getFullYear();
           const pattern = `WO-${currentYear}-%`;
-          
+
           // Query all work orders for this year and extract numbers
           const existingOrders = await db
             .select()
             .from(workOrders)
             .where(sql`${workOrders.workOrderNumber} LIKE ${pattern}`)
             .orderBy(desc(workOrders.createdAt));
-          
+
           let nextNumber = 1;
           if (existingOrders.length > 0) {
             // Filter orders that match the simple format WO-YYYY-XXX (not quarter format)
-            const simpleFormatOrders = existingOrders.filter(order => 
+            const simpleFormatOrders = existingOrders.filter(order =>
               /^WO-\d{4}-\d+$/.test(order.workOrderNumber)
             );
-            
+
             if (simpleFormatOrders.length > 0) {
               // Extract all numbers and find the maximum
               const numbers = simpleFormatOrders
@@ -1534,21 +1542,21 @@ export class DatabaseStorage implements IStorage {
                   return match && match[1] ? parseInt(match[1], 10) : 0;
                 })
                 .filter(n => !isNaN(n));
-              
+
               if (numbers.length > 0) {
                 nextNumber = Math.max(...numbers) + 1 + attempt; // Add attempt number to handle race conditions
               }
             }
           }
-          
+
           workOrderNumber = `WO-${currentYear}-${String(nextNumber).padStart(3, '0')}`;
         }
-        
+
         const [result] = await db.insert(workOrders).values({
           ...data,
           workOrderNumber,
         }).returning();
-        
+
         return result;
       } catch (error: any) {
         // Check if it's a duplicate key error
@@ -1565,7 +1573,7 @@ export class DatabaseStorage implements IStorage {
         throw error;
       }
     }
-    
+
     throw new Error('Failed to create work order after maximum retries');
   }
 
@@ -1591,39 +1599,39 @@ export class DatabaseStorage implements IStorage {
             eq(workOrders.status, "pending_team_acceptance")
           )
         );
-      
+
       // Get full details for each order
       const ordersWithDetails = await Promise.all(
         pendingOrders.map(order => this.getWorkOrderById(order.id))
       );
-      
+
       return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
     }
-    
+
     // Get workshops where this employee is the foreman
     const foremanWorkshops = await db
       .select()
       .from(workshops)
       .where(eq(workshops.foremanId, foremanId));
-    
+
     if (foremanWorkshops.length === 0) {
       return [];
     }
-    
+
     const workshopIds = foremanWorkshops.map(w => w.id);
-    
+
     // Get work orders assigned to these workshops that need team assignment
     const workOrderWorkshopLinks = await db
       .select()
       .from(workOrderWorkshops)
       .where(inArray(workOrderWorkshops.workshopId, workshopIds));
-    
+
     const workOrderIds = workOrderWorkshopLinks.map(link => link.workOrderId);
-    
+
     if (workOrderIds.length === 0) {
       return [];
     }
-    
+
     // Get work orders with status pending_allocation, pending_foreman_assignment or pending_team_acceptance
     const pendingOrders = await db
       .select()
@@ -1638,12 +1646,12 @@ export class DatabaseStorage implements IStorage {
           )
         )
       );
-    
+
     // Get full details for each order
     const ordersWithDetails = await Promise.all(
       pendingOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
@@ -1661,15 +1669,15 @@ export class DatabaseStorage implements IStorage {
             eq(workOrders.status, "waiting_purchase")
           )
         );
-      
+
       // Get full details for each order
       const ordersWithDetails = await Promise.all(
         activeOrders.map(order => this.getWorkOrderById(order.id))
       );
-      
+
       return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
     }
-    
+
     // Get work orders where the foreman is assigned
     const foremanMemberships = await db
       .select()
@@ -1681,13 +1689,13 @@ export class DatabaseStorage implements IStorage {
           eq(workOrderMemberships.isActive, true)
         )
       );
-    
+
     if (foremanMemberships.length === 0) {
       return [];
     }
-    
+
     const workOrderIds = foremanMemberships.map(m => m.workOrderId);
-    
+
     // Get work orders with active statuses
     const activeOrders = await db
       .select()
@@ -1703,12 +1711,12 @@ export class DatabaseStorage implements IStorage {
           )
         )
       );
-    
+
     // Get full details for each order
     const ordersWithDetails = await Promise.all(
       activeOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
@@ -1720,15 +1728,15 @@ export class DatabaseStorage implements IStorage {
         .from(workOrders)
         .where(eq(workOrders.completionApprovalStatus, "approved"))
         .orderBy(desc(workOrders.completionApprovedAt));
-      
+
       // Get full details for each order
       const ordersWithDetails = await Promise.all(
         approvedCompletions.map(order => this.getWorkOrderById(order.id))
       );
-      
+
       return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
     }
-    
+
     // Get work orders where the foreman is assigned and completions are approved
     const foremanMemberships = await db
       .select()
@@ -1740,13 +1748,13 @@ export class DatabaseStorage implements IStorage {
           eq(workOrderMemberships.isActive, true)
         )
       );
-    
+
     if (foremanMemberships.length === 0) {
       return [];
     }
-    
+
     const workOrderIds = foremanMemberships.map(m => m.workOrderId);
-    
+
     // Get work orders with approved completions
     const approvedCompletions = await db
       .select()
@@ -1758,18 +1766,18 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(desc(workOrders.completionApprovedAt));
-    
+
     // Get full details for each order
     const ordersWithDetails = await Promise.all(
       approvedCompletions.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
   async getWorkOrdersByTeamMember(teamMemberId: string, isAdmin?: boolean): Promise<WorkOrderWithDetails[]> {
     let ordersList: typeof workOrders.$inferSelect[];
-    
+
     // If admin, return all work orders with team member assignments
     if (isAdmin) {
       ordersList = await db
@@ -1788,13 +1796,13 @@ export class DatabaseStorage implements IStorage {
             eq(workOrderMemberships.isActive, true)
           )
         );
-      
+
       if (teamMemberships.length === 0) {
         return [];
       }
-      
+
       const workOrderIds = teamMemberships.map(m => m.workOrderId);
-      
+
       // Get work orders (all active statuses)
       ordersList = await db
         .select()
@@ -1802,11 +1810,11 @@ export class DatabaseStorage implements IStorage {
         .where(inArray(workOrders.id, workOrderIds))
         .orderBy(desc(workOrders.createdAt));
     }
-    
+
     if (ordersList.length === 0) {
       return [];
     }
-    
+
     // Batch fetch all related data to avoid N+1 queries
     const orderIds = ordersList.map(o => o.id);
     const equipmentIds = [...new Set(ordersList.map(o => o.equipmentId))];
@@ -1816,7 +1824,7 @@ export class DatabaseStorage implements IStorage {
       ...(o.assignedToIds || []),
       o.createdById
     ].filter((id): id is string => id !== null && id !== undefined)))];
-    
+
     // Fetch all related data in parallel (with guards for empty arrays to avoid invalid SQL)
     const [equipmentList, garageList, workshopList, employeeList, requiredPartsList] = await Promise.all([
       equipmentIds.length > 0 ? db.select().from(equipment).where(inArray(equipment.id, equipmentIds)) : Promise.resolve([]),
@@ -1825,7 +1833,7 @@ export class DatabaseStorage implements IStorage {
       employeeIds.length > 0 ? db.select().from(employees).where(inArray(employees.id, employeeIds)) : Promise.resolve([]),
       orderIds.length > 0 ? db.select().from(workOrderRequiredParts).where(inArray(workOrderRequiredParts.workOrderId, orderIds)) : Promise.resolve([])
     ]);
-    
+
     // Create lookup maps for O(1) access
     const equipmentMap = new Map(equipmentList.map(e => [e.id, e]));
     const garageMap = new Map(garageList.map(g => [g.id, g]));
@@ -1837,15 +1845,15 @@ export class DatabaseStorage implements IStorage {
       existing.push(part);
       requiredPartsMap.set(part.workOrderId, existing);
     });
-    
+
     // Assemble work orders with details using in-memory lookups
     const ordersWithDetails: WorkOrderWithDetails[] = ordersList.map(order => {
       const assignedToList = (order.assignedToIds || [])
         .map(id => employeeMap.get(id))
         .filter((e): e is typeof employees.$inferSelect => e !== undefined);
-      
+
       const equipmentData = equipmentMap.get(order.equipmentId);
-      
+
       return {
         ...order,
         equipment: equipmentData,
@@ -1859,7 +1867,7 @@ export class DatabaseStorage implements IStorage {
         requiredParts: requiredPartsMap.get(order.id) || [],
       };
     });
-    
+
     return ordersWithDetails;
   }
 
@@ -1875,7 +1883,7 @@ export class DatabaseStorage implements IStorage {
           eq(workOrderMemberships.role, "foreman")
         )
       );
-    
+
     if (existingForemanMembership.length === 0) {
       await db.insert(workOrderMemberships).values({
         workOrderId,
@@ -1884,7 +1892,7 @@ export class DatabaseStorage implements IStorage {
         assignedBy: foremanId,
       });
     }
-    
+
     // Insert team member memberships
     const teamMemberValues = teamMemberIds.map(memberId => ({
       workOrderId,
@@ -1892,11 +1900,11 @@ export class DatabaseStorage implements IStorage {
       role: "team_member",
       assignedBy: foremanId,
     }));
-    
+
     if (teamMemberValues.length > 0) {
       await db.insert(workOrderMemberships).values(teamMemberValues);
     }
-    
+
     // Auto-populate labor entries for assigned team members with minimum 1 minute
     if (teamMemberIds.length > 0) {
       // Check which employees already have labor entries for this work order
@@ -1909,10 +1917,10 @@ export class DatabaseStorage implements IStorage {
             inArray(workOrderLaborEntries.employeeId, teamMemberIds)
           )
         );
-      
+
       const existingEmployeeIds = new Set(existingEntries.map(e => e.employeeId));
       const newEmployeeIds = teamMemberIds.filter(id => !existingEmployeeIds.has(id));
-      
+
       if (newEmployeeIds.length > 0) {
         const assignedEmployees = await db
           .select({
@@ -1922,7 +1930,7 @@ export class DatabaseStorage implements IStorage {
           })
           .from(employees)
           .where(inArray(employees.id, newEmployeeIds));
-        
+
         // Create labor entries with minimum 1 minute (0.0167 hours) to show non-zero cost
         // Mark as "auto" so they can be automatically updated based on elapsed time
         const laborEntries = assignedEmployees.map(employee => {
@@ -1940,23 +1948,23 @@ export class DatabaseStorage implements IStorage {
             timeSource: "auto", // Mark for automatic updates
           };
         });
-        
+
         if (laborEntries.length > 0) {
           await db.insert(workOrderLaborEntries).values(laborEntries);
         }
       }
     }
-    
+
     // Update work order status to active and set startedAt timestamp
     const now = new Date();
     await db
       .update(workOrders)
-      .set({ 
+      .set({
         status: "active",
         startedAt: now
       })
       .where(eq(workOrders.id, workOrderId));
-    
+
     // Create timer start event in time tracking
     await db.insert(workOrderTimeTracking).values({
       workOrderId,
@@ -1973,7 +1981,7 @@ export class DatabaseStorage implements IStorage {
   async replaceWorkOrderRequiredParts(workOrderId: string, parts: InsertWorkOrderRequiredPart[]): Promise<void> {
     // Delete existing parts
     await db.delete(workOrderRequiredParts).where(eq(workOrderRequiredParts.workOrderId, workOrderId));
-    
+
     // Insert new parts if any
     if (parts.length > 0) {
       const partsWithWorkOrderId = parts.map(part => ({
@@ -2018,15 +2026,15 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(employees, eq(workOrderLaborEntries.employeeId, employees.id))
       .where(eq(workOrderLaborEntries.workOrderId, workOrderId))
       .orderBy(desc(workOrderLaborEntries.createdAt));
-    
+
     return entries.map((row: any) => {
       // Drizzle returns joined data with table names as keys
       const entry = row.work_order_labor_entries;
       const employee = row.employees;
-      
+
       // Get employee name from joined data (using fullName or full_name)
       const employeeName = employee?.fullName || employee?.full_name || null;
-      
+
       return {
         ...entry,
         // Parse all decimal fields to numbers
@@ -2048,7 +2056,7 @@ export class DatabaseStorage implements IStorage {
       .from(workOrderLubricantEntries)
       .where(eq(workOrderLubricantEntries.workOrderId, workOrderId))
       .orderBy(desc(workOrderLubricantEntries.createdAt));
-    
+
     return entries.map(entry => ({
       ...entry,
       // Parse all decimal fields to numbers
@@ -2067,7 +2075,7 @@ export class DatabaseStorage implements IStorage {
       .from(workOrderOutsourceEntries)
       .where(eq(workOrderOutsourceEntries.workOrderId, workOrderId))
       .orderBy(desc(workOrderOutsourceEntries.createdAt));
-    
+
     return entries.map(entry => ({
       ...entry,
       // Parse all decimal fields to numbers
@@ -2083,7 +2091,7 @@ export class DatabaseStorage implements IStorage {
       .insert(workOrderLaborEntries)
       .values(data)
       .returning();
-    
+
     await this.updateWorkOrderCosts(data.workOrderId);
     return entry;
   }
@@ -2094,44 +2102,44 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrderLaborEntries)
       .where(eq(workOrderLaborEntries.id, id));
-    
+
     if (!existingEntry) {
       throw new Error("Labor entry not found");
     }
-    
+
     // Only allow updating overtimeFactor and description
     const updateData: any = {};
-    
+
     if (data.overtimeFactor !== undefined) {
       updateData.overtimeFactor = typeof data.overtimeFactor === 'number'
         ? data.overtimeFactor
         : parseFloat(data.overtimeFactor as any);
-      
+
       // Recalculate totalCost based on existing hours and rate with new overtime factor
-      const existingHours = typeof existingEntry.hoursWorked === 'number' 
-        ? existingEntry.hoursWorked 
+      const existingHours = typeof existingEntry.hoursWorked === 'number'
+        ? existingEntry.hoursWorked
         : parseFloat(existingEntry.hoursWorked as any);
       const existingRate = typeof existingEntry.hourlyRateSnapshot === 'number'
         ? existingEntry.hourlyRateSnapshot
         : parseFloat(existingEntry.hourlyRateSnapshot as any);
-      
+
       updateData.totalCost = existingHours * existingRate * updateData.overtimeFactor;
     }
-    
+
     if (data.description !== undefined) {
       updateData.description = data.description;
     }
-    
+
     // Prevent changing workOrderId, employeeId, hours, rate, date (immutable for security and data integrity)
     // These are intentionally omitted from the updateData
-    
+
     // Update the entry
     const [updatedEntry] = await db
       .update(workOrderLaborEntries)
       .set(updateData)
       .where(eq(workOrderLaborEntries.id, id))
       .returning();
-    
+
     // Update work order costs
     await this.updateWorkOrderCosts(existingEntry.workOrderId);
     return updatedEntry;
@@ -2142,7 +2150,7 @@ export class DatabaseStorage implements IStorage {
       .insert(workOrderLubricantEntries)
       .values(data)
       .returning();
-    
+
     await this.updateWorkOrderCosts(data.workOrderId);
     return entry;
   }
@@ -2152,7 +2160,7 @@ export class DatabaseStorage implements IStorage {
       .insert(workOrderOutsourceEntries)
       .values(data)
       .returning();
-    
+
     await this.updateWorkOrderCosts(data.workOrderId);
     return entry;
   }
@@ -2162,7 +2170,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrderLaborEntries)
       .where(eq(workOrderLaborEntries.id, id));
-    
+
     if (entry) {
       await db.delete(workOrderLaborEntries).where(eq(workOrderLaborEntries.id, id));
       await this.updateWorkOrderCosts(entry.workOrderId);
@@ -2174,7 +2182,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrderLubricantEntries)
       .where(eq(workOrderLubricantEntries.id, id));
-    
+
     if (entry) {
       await db.delete(workOrderLubricantEntries).where(eq(workOrderLubricantEntries.id, id));
       await this.updateWorkOrderCosts(entry.workOrderId);
@@ -2186,7 +2194,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrderOutsourceEntries)
       .where(eq(workOrderOutsourceEntries.id, id));
-    
+
     if (entry) {
       await db.delete(workOrderOutsourceEntries).where(eq(workOrderOutsourceEntries.id, id));
       await this.updateWorkOrderCosts(entry.workOrderId);
@@ -2201,7 +2209,7 @@ export class DatabaseStorage implements IStorage {
     const plannedLaborCost = laborEntries
       .filter(e => e.entryType === 'planned')
       .reduce((sum, e) => sum + Number(e.totalCost), 0);
-    
+
     const actualLaborCost = laborEntries
       .filter(e => e.entryType === 'actual')
       .reduce((sum, e) => sum + Number(e.totalCost), 0);
@@ -2209,7 +2217,7 @@ export class DatabaseStorage implements IStorage {
     const plannedLubricantCost = lubricantEntries
       .filter(e => e.entryType === 'planned')
       .reduce((sum, e) => sum + Number(e.totalCost), 0);
-    
+
     const actualLubricantCost = lubricantEntries
       .filter(e => e.entryType === 'actual')
       .reduce((sum, e) => sum + Number(e.totalCost), 0);
@@ -2217,7 +2225,7 @@ export class DatabaseStorage implements IStorage {
     const plannedOutsourceCost = outsourceEntries
       .filter(e => e.entryType === 'planned')
       .reduce((sum, e) => sum + (Number(e.plannedCost) || 0), 0);
-    
+
     const actualOutsourceCost = outsourceEntries
       .filter(e => e.entryType === 'actual')
       .reduce((sum, e) => sum + Number(e.actualCost), 0);
@@ -2225,8 +2233,8 @@ export class DatabaseStorage implements IStorage {
     const totalPlannedCost = plannedLaborCost + plannedLubricantCost + plannedOutsourceCost;
     const totalActualCost = actualLaborCost + actualLubricantCost + actualOutsourceCost;
     const costVariance = totalActualCost - totalPlannedCost;
-    const costVariancePercent = totalPlannedCost > 0 
-      ? ((costVariance / totalPlannedCost) * 100) 
+    const costVariancePercent = totalPlannedCost > 0
+      ? ((costVariance / totalPlannedCost) * 100)
       : 0;
 
     await db
@@ -2249,7 +2257,7 @@ export class DatabaseStorage implements IStorage {
   // Standard Operating Procedures
   async getAllSOPs(filters?: { category?: string; targetRole?: string; language?: string }): Promise<StandardOperatingProcedure[]> {
     const conditions = [eq(standardOperatingProcedures.isActive, true)];
-    
+
     if (filters?.category) {
       conditions.push(eq(standardOperatingProcedures.category, filters.category));
     }
@@ -2259,9 +2267,9 @@ export class DatabaseStorage implements IStorage {
     if (filters?.language) {
       conditions.push(eq(standardOperatingProcedures.language, filters.language));
     }
-    
+
     const whereClause = and(...conditions);
-    
+
     return await db.select().from(standardOperatingProcedures).where(whereClause).orderBy(standardOperatingProcedures.title);
   }
 
@@ -2286,7 +2294,7 @@ export class DatabaseStorage implements IStorage {
   // Parts Storage Locations
   async getPartStorageLocations(partId: string): Promise<PartsStorageLocationWithDetails[]> {
     const locations = await db.select().from(partsStorageLocations).where(eq(partsStorageLocations.partId, partId));
-    
+
     const locationsWithDetails = await Promise.all(
       locations.map(async (location) => {
         const [part] = await db.select().from(spareParts).where(eq(spareParts.id, location.partId));
@@ -2297,13 +2305,13 @@ export class DatabaseStorage implements IStorage {
         return { ...location, part, garage };
       })
     );
-    
+
     return locationsWithDetails;
   }
 
   async getGaragePartsInventory(garageId: string): Promise<PartsStorageLocationWithDetails[]> {
     const locations = await db.select().from(partsStorageLocations).where(eq(partsStorageLocations.garageId, garageId));
-    
+
     const locationsWithDetails = await Promise.all(
       locations.map(async (location) => {
         const [part] = await db.select().from(spareParts).where(eq(spareParts.id, location.partId));
@@ -2311,7 +2319,7 @@ export class DatabaseStorage implements IStorage {
         return { ...location, part, garage };
       })
     );
-    
+
     return locationsWithDetails;
   }
 
@@ -2344,7 +2352,7 @@ export class DatabaseStorage implements IStorage {
       ))
       .orderBy(desc(equipmentLocations.arrivedAt))
       .limit(1);
-    
+
     return result || undefined;
   }
 
@@ -2496,7 +2504,7 @@ export class DatabaseStorage implements IStorage {
   // Reception Checklists (Templates)
   async getChecklistTemplates(filters?: { equipmentType?: string; role?: string }): Promise<ReceptionChecklist[]> {
     const conditions = [eq(receptionChecklists.isActive, true)];
-    
+
     if (filters?.equipmentType) {
       conditions.push(
         or(
@@ -2546,7 +2554,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(equipmentInspections)
       .where(eq(equipmentInspections.id, id));
-    
+
     if (!inspection) return undefined;
 
     // Fetch related reception data
@@ -2626,12 +2634,12 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(equipmentReceptions, eq(equipmentInspections.receptionId, equipmentReceptions.id))
       .leftJoin(employees, eq(equipmentInspections.inspectorId, employees.id))
       .orderBy(desc(equipmentInspections.createdAt));
-    
+
     // Fetch equipment details for each reception
     const enrichedResults = await Promise.all(
       results.map(async (result) => {
         if (result.reception) {
-          const equipment = result.reception.equipmentId 
+          const equipment = result.reception.equipmentId
             ? await this.getEquipmentById(result.reception.equipmentId)
             : null;
           return {
@@ -2676,20 +2684,20 @@ export class DatabaseStorage implements IStorage {
         )
       )
       .orderBy(desc(equipmentInspections.updatedAt));
-    
+
     // Fetch equipment and driver details for each reception
     const enrichedResults = await Promise.all(
       results.map(async (result) => {
         if (result.reception) {
-          const equipment = result.reception.equipmentId 
+          const equipment = result.reception.equipmentId
             ? await this.getEquipmentById(result.reception.equipmentId)
             : null;
-          
+
           // Fetch driver information if driverId exists
           const driver = result.reception.driverId
             ? await this.getEmployeeById(result.reception.driverId)
             : null;
-          
+
           return {
             ...result,
             reception: {
@@ -2728,12 +2736,12 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(employees, eq(equipmentInspections.inspectorId, employees.id))
       .where(eq(equipmentInspections.status, "canceled"))
       .orderBy(desc(equipmentInspections.updatedAt));
-    
+
     // Fetch equipment details for each reception
     const enrichedResults = await Promise.all(
       results.map(async (result) => {
         if (result.reception) {
-          const equipment = result.reception.equipmentId 
+          const equipment = result.reception.equipmentId
             ? await this.getEquipmentById(result.reception.equipmentId)
             : null;
           return {
@@ -2760,7 +2768,7 @@ export class DatabaseStorage implements IStorage {
 
     // Check if an inspection exists for this reception
     const inspection = await this.getInspectionByReceptionId(receptionId);
-    
+
     if (inspection) {
       // Update inspection status to canceled
       await db
@@ -2812,7 +2820,7 @@ export class DatabaseStorage implements IStorage {
       await tx
         .delete(inspectionChecklistItems)
         .where(eq(inspectionChecklistItems.inspectionId, inspectionId));
-      
+
       // Insert new checklist items
       if (items.length === 0) return [];
       const results = await tx.insert(inspectionChecklistItems).values(items).returning();
@@ -3081,22 +3089,22 @@ export class DatabaseStorage implements IStorage {
       .from(itemRequisitions)
       .where(sql`${itemRequisitions.requisitionNumber} LIKE ${prefix + '%'}`)
       .orderBy(desc(itemRequisitions.requisitionNumber));
-    
+
     let nextNumber = 1;
     if (existingReqs.length > 0) {
       const lastNumber = existingReqs[0].requisitionNumber.split('-')[2];
       nextNumber = parseInt(lastNumber) + 1;
     }
-    
+
     const requisitionNumber = `${prefix}${String(nextNumber).padStart(3, '0')}`;
-    
+
     // Create requisition
     const [requisition] = await db.insert(itemRequisitions).values({
       ...requisitionData,
       requisitionNumber,
       status: 'pending_foreman',
     }).returning();
-    
+
     // Create requisition lines
     if (lines.length > 0) {
       const linesWithReqId = lines.map((line, index) => ({
@@ -3106,13 +3114,13 @@ export class DatabaseStorage implements IStorage {
       }));
       await db.insert(itemRequisitionLines).values(linesWithReqId);
     }
-    
+
     return requisition;
   }
 
   async getItemRequisitionsByForeman(foremanId: string, isAdmin?: boolean): Promise<any[]> {
     let requisitions;
-    
+
     // If admin, return all requisitions (not just pending) so they can see approved/rejected tabs
     if (isAdmin) {
       requisitions = await db
@@ -3125,25 +3133,25 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(workshops)
         .where(eq(workshops.foremanId, foremanId));
-      
+
       if (foremanWorkshops.length === 0) {
         return [];
       }
-      
+
       const workshopIds = foremanWorkshops.map(w => w.id);
-      
+
       // Get work orders assigned to the foreman's workshops
       const workOrderIds = await db
         .selectDistinct({ workOrderId: workOrderWorkshops.workOrderId })
         .from(workOrderWorkshops)
         .where(inArray(workOrderWorkshops.workshopId, workshopIds));
-      
+
       const woIds = workOrderIds.map(wo => wo.workOrderId);
-      
+
       if (woIds.length === 0) {
         return [];
       }
-      
+
       // Get all requisitions for these work orders (not just pending) so foreman can see approved/rejected tabs
       requisitions = await db
         .select()
@@ -3151,7 +3159,7 @@ export class DatabaseStorage implements IStorage {
         .where(inArray(itemRequisitions.workOrderId, woIds))
         .orderBy(desc(itemRequisitions.createdAt));
     }
-    
+
     // Get lines and requester for each requisition
     const requisitionsWithLines = await Promise.all(
       requisitions.map(async (req) => {
@@ -3160,21 +3168,21 @@ export class DatabaseStorage implements IStorage {
           .from(itemRequisitionLines)
           .where(eq(itemRequisitionLines.requisitionId, req.id))
           .orderBy(itemRequisitionLines.lineNumber);
-        
+
         const [requester] = await db
           .select()
           .from(employees)
           .where(eq(employees.id, req.requesterId));
-        
+
         const [workOrder] = await db
           .select()
           .from(workOrders)
           .where(eq(workOrders.id, req.workOrderId));
-        
+
         return { ...req, lines, requester, workOrder };
       })
     );
-    
+
     return requisitionsWithLines;
   }
 
@@ -3185,7 +3193,7 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(itemRequisitions)
       .orderBy(desc(itemRequisitions.createdAt));
-    
+
     // Get lines, requester, and work order for each requisition
     const requisitionsWithLines = await Promise.all(
       requisitions.map(async (req) => {
@@ -3200,7 +3208,7 @@ export class DatabaseStorage implements IStorage {
             )
           )
           .orderBy(itemRequisitionLines.lineNumber);
-        
+
         // Calculate available stock for each line
         const linesWithStock = await Promise.all(
           lines.map(async (line) => {
@@ -3210,9 +3218,9 @@ export class DatabaseStorage implements IStorage {
                 .select()
                 .from(spareParts)
                 .where(eq(spareParts.id, line.sparePartId));
-              
+
               const totalStock = part?.stockQuantity || 0;
-              
+
               // Determine stock status
               let stockStatus = 'out_of_stock';
               if (totalStock >= line.quantityRequested) {
@@ -3220,9 +3228,9 @@ export class DatabaseStorage implements IStorage {
               } else if (totalStock > 0) {
                 stockStatus = 'low_stock';
               }
-              
-              return { 
-                ...line, 
+
+              return {
+                ...line,
                 availableStock: totalStock,
                 stockStatus
               };
@@ -3230,20 +3238,20 @@ export class DatabaseStorage implements IStorage {
             return { ...line, availableStock: 0, stockStatus: 'unknown' };
           })
         );
-        
+
         const [requester] = await db
           .select()
           .from(employees)
           .where(eq(employees.id, req.requesterId));
-        
+
         const [workOrder] = req.workOrderId
           ? await db.select().from(workOrders).where(eq(workOrders.id, req.workOrderId))
           : [null];
-        
+
         return { ...req, lines: linesWithStock, requester, workOrder };
       })
     );
-    
+
     return requisitionsWithLines;
   }
 
@@ -3300,7 +3308,7 @@ export class DatabaseStorage implements IStorage {
       for (const line of lines) {
         if (line.sparePartId) {
           const quantityNeeded = line.quantityApproved || line.quantityRequested;
-          
+
           // Get available stock for this part with row lock
           const [part] = await tx
             .select()
@@ -3312,18 +3320,18 @@ export class DatabaseStorage implements IStorage {
 
           const availableStock = part.stockQuantity || 0;
           let remainingQuantity = quantityNeeded;
-          
+
           // Deduct from available stock
           if (availableStock > 0) {
             const deductQuantity = Math.min(availableStock, quantityNeeded);
             const newQuantity = availableStock - deductQuantity;
-            
+
             // Update the stock quantity
             await tx
               .update(spareParts)
               .set({ stockQuantity: newQuantity })
               .where(eq(spareParts.id, line.sparePartId));
-            
+
             // Create parts receipt record to track issued parts
             if (requisition.workOrderId && deductQuantity > 0) {
               await tx.insert(partsReceipts).values({
@@ -3335,25 +3343,25 @@ export class DatabaseStorage implements IStorage {
                 issuedAt: new Date(),
               });
             }
-            
+
             remainingQuantity -= deductQuantity;
           }
 
           // If stock is insufficient, create purchase request
           if (remainingQuantity > 0) {
             hasBackorders = true;
-            
+
             // Generate purchase request number atomically using PostgreSQL advisory lock
             const currentYear = new Date().getFullYear();
             const prefix = `PO-${currentYear}-`;
-            
+
             // Use advisory lock to ensure atomic number generation even when table is empty
             // Lock key is hash of year to ensure separate sequences per year
             const lockKey = currentYear; // Advisory lock key
-            
+
             // Acquire advisory lock first
             await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockKey})`);
-            
+
             // Then get the next number using a simpler approach
             const pattern = `PO-${currentYear}-%`;
             const result = await tx.execute(sql`
@@ -3366,7 +3374,7 @@ export class DatabaseStorage implements IStorage {
               FROM purchase_requests
               WHERE purchase_request_number LIKE ${pattern}
             `);
-            
+
             const nextNum = (result.rows[0] as any).num;
             const purchaseRequestNumber = `${prefix}${String(nextNum).padStart(3, '0')}`;
 
@@ -3382,7 +3390,7 @@ export class DatabaseStorage implements IStorage {
             // Update line status to indicate backorder
             await tx
               .update(itemRequisitionLines)
-              .set({ 
+              .set({
                 status: 'backordered',
                 remarks: `Pending purchase: ${remainingQuantity} units ordered`
               })
@@ -3425,7 +3433,7 @@ export class DatabaseStorage implements IStorage {
             .update(workOrders)
             .set({ status: 'in_progress' })
             .where(eq(workOrders.id, requisition.workOrderId));
-          
+
           // Resume timer when items are issued
           await tx.insert(workOrderTimeTracking).values({
             workOrderId: requisition.workOrderId,
@@ -3558,7 +3566,7 @@ export class DatabaseStorage implements IStorage {
 
               // Acquire advisory lock first
               await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockKey})`);
-              
+
               // Then get the next number using a simpler approach
               const pattern = `PO-${currentYear}-%`;
               const result = await tx.execute(sql`
@@ -3630,7 +3638,7 @@ export class DatabaseStorage implements IStorage {
 
           // Acquire advisory lock first
           await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockKey})`);
-          
+
           // Then get the next number using a simpler approach
           const pattern = `PO-${currentYear}-%`;
           const result = await tx.execute(sql`
@@ -3725,7 +3733,7 @@ export class DatabaseStorage implements IStorage {
               .update(workOrders)
               .set({ status: newWorkOrderStatus })
               .where(eq(workOrders.id, requisition.workOrderId));
-            
+
             // Pause timer when waiting for purchase, resume when items issued
             if (newWorkOrderStatus === 'waiting_purchase') {
               await tx.insert(workOrderTimeTracking).values({
@@ -3734,8 +3742,8 @@ export class DatabaseStorage implements IStorage {
                 reason: "waiting_purchase",
                 triggeredById: storeManagerId,
               });
-            } else if (newWorkOrderStatus === 'in_progress' && 
-                      (workOrder.status === 'awaiting_parts' || workOrder.status === 'waiting_purchase')) {
+            } else if (newWorkOrderStatus === 'in_progress' &&
+              (workOrder.status === 'awaiting_parts' || workOrder.status === 'waiting_purchase')) {
               await tx.insert(workOrderTimeTracking).values({
                 workOrderId: requisition.workOrderId,
                 event: "resume",
@@ -3943,7 +3951,7 @@ export class DatabaseStorage implements IStorage {
           if (line.status === 'backordered') {
             await tx
               .update(itemRequisitionLines)
-              .set({ 
+              .set({
                 status: 'pending_store',
                 remarks: 'Stock replenished - ready for store manager approval',
                 updatedAt: new Date()
@@ -3966,7 +3974,7 @@ export class DatabaseStorage implements IStorage {
               if (!hasRemainingBackorders) {
                 await tx
                   .update(itemRequisitions)
-                  .set({ 
+                  .set({
                     status: 'pending_store',
                     updatedAt: new Date()
                   })
@@ -3992,7 +4000,7 @@ export class DatabaseStorage implements IStorage {
       if (data.quantityReceived !== undefined) {
         const currentReceived = purchaseRequest.quantityReceived || 0;
         const newTotal = currentReceived + data.quantityReceived;
-        
+
         // Server-side validation: prevent over-receipting
         if (newTotal > purchaseRequest.quantityRequested) {
           throw new Error(
@@ -4001,7 +4009,7 @@ export class DatabaseStorage implements IStorage {
             `Maximum allowed: ${purchaseRequest.quantityRequested - currentReceived}`
           );
         }
-        
+
         updateData.quantityReceived = newTotal;
       }
 
@@ -4015,7 +4023,7 @@ export class DatabaseStorage implements IStorage {
 
   async confirmPartsReceipt(requisitionId: string, teamMemberId: string): Promise<void> {
     const requisition = await db.select().from(itemRequisitions).where(eq(itemRequisitions.id, requisitionId)).limit(1);
-    
+
     if (requisition.length === 0) {
       throw new Error("Requisition not found");
     }
@@ -4049,7 +4057,7 @@ export class DatabaseStorage implements IStorage {
 
   async markWorkComplete(workOrderId: string, teamMemberId: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4084,7 +4092,7 @@ export class DatabaseStorage implements IStorage {
 
   async approveWorkCompletion(workOrderId: string, foremanId: string, notes?: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4123,16 +4131,16 @@ export class DatabaseStorage implements IStorage {
           eq(workOrderMemberships.workOrderId, workOrderId),
           eq(workOrderMemberships.role, "team_member")
         ));
-      
+
       if (teamMemberships.length > 0) {
         // Ensure labor entries exist for all team members
         const existingEntries = await db
           .select()
           .from(workOrderLaborEntries)
           .where(eq(workOrderLaborEntries.workOrderId, workOrderId));
-        
+
         const existingEmployeeIds = new Set(existingEntries.map(e => e.employeeId));
-        
+
         // Create labor entries for team members who don't have one
         const missingMembers = teamMemberships.filter(m => !existingEmployeeIds.has(m.employeeId));
         for (const member of missingMembers) {
@@ -4148,20 +4156,20 @@ export class DatabaseStorage implements IStorage {
             description: null,
           });
         }
-        
+
         // Get all labor entries (now including newly created ones)
         const allLaborEntries = await db
           .select()
           .from(workOrderLaborEntries)
           .where(eq(workOrderLaborEntries.workOrderId, workOrderId));
-        
+
         // Count unique team members (not total entries)
         const uniqueEmployeeIds = new Set(allLaborEntries.map(e => e.employeeId));
         const teamMemberCount = uniqueEmployeeIds.size;
-        
+
         // Distribute elapsed hours equally among unique team members
         const hoursPerMember = elapsedHours / teamMemberCount;
-        
+
         // Group entries by employee and update the first entry for each employee
         const entriesByEmployee = new Map();
         for (const entry of allLaborEntries) {
@@ -4169,13 +4177,13 @@ export class DatabaseStorage implements IStorage {
             entriesByEmployee.set(entry.employeeId, entry);
           }
         }
-        
+
         // Update one labor entry per team member with calculated hours
         for (const [, entry] of entriesByEmployee) {
           const hourlyRate = parseFloat(entry.hourlyRateSnapshot as any) || 0;
           const overtimeFactor = parseFloat(entry.overtimeFactor as any) || 1.0;
           const totalCost = hoursPerMember * hourlyRate * overtimeFactor;
-          
+
           await db
             .update(workOrderLaborEntries)
             .set({
@@ -4184,7 +4192,7 @@ export class DatabaseStorage implements IStorage {
             })
             .where(eq(workOrderLaborEntries.id, entry.id));
         }
-        
+
         // Update total labor cost in work order
         await this.updateWorkOrderCosts(workOrderId);
       }
@@ -4208,11 +4216,11 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrders)
       .where(eq(workOrders.status, "pending_verification"));
-    
+
     const ordersWithDetails = await Promise.all(
       pendingOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
@@ -4222,11 +4230,11 @@ export class DatabaseStorage implements IStorage {
       .from(workOrders)
       .where(eq(workOrders.status, "verified"))
       .orderBy(desc(workOrders.completedAt));
-    
+
     const ordersWithDetails = await Promise.all(
       verifiedOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
@@ -4236,17 +4244,17 @@ export class DatabaseStorage implements IStorage {
       .from(workOrders)
       .where(eq(workOrders.status, "rejected"))
       .orderBy(desc(workOrders.createdAt));
-    
+
     const ordersWithDetails = await Promise.all(
       rejectedOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
   async approveWorkOrderVerification(workOrderId: string, verifierId: string, notes?: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4267,10 +4275,10 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(workOrders.id, workOrderId));
   }
-  
+
   async markWorkOrderAsCompleted(workOrderId: string, completedById: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4296,7 +4304,7 @@ export class DatabaseStorage implements IStorage {
 
   async rejectWorkOrderVerification(workOrderId: string, verifierId: string, rejectionNotes: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4324,17 +4332,17 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(workOrders)
       .where(eq(workOrders.status, "pending_supervisor"));
-    
+
     const ordersWithDetails = await Promise.all(
       pendingOrders.map(order => this.getWorkOrderById(order.id))
     );
-    
+
     return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
   }
 
   async approveSupervisorSignoff(workOrderId: string, supervisorId: string, notes?: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4358,7 +4366,7 @@ export class DatabaseStorage implements IStorage {
 
   async rejectSupervisorSignoff(workOrderId: string, supervisorId: string, rejectionNotes: string): Promise<void> {
     const workOrder = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId)).limit(1);
-    
+
     if (workOrder.length === 0) {
       throw new Error("Work order not found");
     }
@@ -4554,7 +4562,7 @@ export class DatabaseStorage implements IStorage {
 
   async saveSystemSettings(data: InsertSystemSettings, updatedById: string): Promise<SystemSettings> {
     const existing = await this.getSystemSettings();
-    
+
     if (existing) {
       // Update existing settings
       const [result] = await db
@@ -4688,7 +4696,7 @@ export class DatabaseStorage implements IStorage {
   async syncMellaTechVehicles(vehiclesData: any[]): Promise<void> {
     for (const vehicleData of vehiclesData) {
       const existing = await this.getMellaTechVehicleByMellaTechId(vehicleData.mellaTechId);
-      
+
       if (existing) {
         await db
           .update(mellaTechVehicles)
@@ -4809,44 +4817,44 @@ export class DatabaseStorage implements IStorage {
   // Ethiopian Calendar Year Management Operations
   async closeEthiopianYear(closedByEmployeeId: string, notes?: string): Promise<YearClosureLog> {
     const { getCurrentEthiopianYear } = await import("./ethiopian-calendar");
-    
+
     // Use a transaction to ensure atomicity
     return await db.transaction(async (tx) => {
       // Get current settings
       const [settings] = await tx.select().from(systemSettings).limit(1);
       const currentYear = settings?.activeEthiopianYear || getCurrentEthiopianYear();
       const newYear = currentYear + 1;
-      
+
       // Get employee details for denormalization
       const [closedByEmployee] = await tx
         .select()
         .from(employees)
         .where(eq(employees.id, closedByEmployeeId))
         .limit(1);
-      
+
       if (!closedByEmployee) {
         throw new Error("Employee not found");
       }
-      
+
       // Archive completed work orders - capture specific IDs
       const completedOrders = await tx
         .select()
         .from(workOrders)
         .where(eq(workOrders.status, "completed"));
-      
+
       const archivedIds: string[] = [];
-      
+
       // Archive each work order
       for (const order of completedOrders) {
-        const [creator] = order.createdById 
+        const [creator] = order.createdById
           ? await tx.select().from(employees).where(eq(employees.id, order.createdById)).limit(1)
           : [];
-        
+
         // Fetch equipment model if equipment is assigned
         const [equipmentInfo] = order.equipmentId
           ? await tx.select().from(equipment).where(eq(equipment.id, order.equipmentId)).limit(1)
           : [];
-        
+
         await tx.insert(workOrdersArchive).values({
           originalWorkOrderId: order.id,
           workOrderNumber: order.workOrderNumber,
@@ -4871,15 +4879,15 @@ export class DatabaseStorage implements IStorage {
           createdAt: order.createdAt,
           archivedBy: closedByEmployeeId,
         });
-        
+
         archivedIds.push(order.id);
       }
-      
+
       // Delete only the specific work orders that were archived
       if (archivedIds.length > 0) {
         await tx.delete(workOrders).where(inArray(workOrders.id, archivedIds));
       }
-      
+
       // Reset planning targets for all workshops
       const allWorkshops = await tx.select().from(workshops);
       for (const workshop of allWorkshops) {
@@ -4894,7 +4902,7 @@ export class DatabaseStorage implements IStorage {
           })
           .where(eq(workshops.id, workshop.id));
       }
-      
+
       // Update system settings
       if (settings) {
         await tx.update(systemSettings)
@@ -4915,7 +4923,7 @@ export class DatabaseStorage implements IStorage {
           updatedBy: closedByEmployeeId,
         });
       }
-      
+
       // Create year closure log
       const [closureLog] = await tx.insert(yearClosureLogs).values({
         closedEthiopianYear: currentYear,
@@ -4927,7 +4935,7 @@ export class DatabaseStorage implements IStorage {
         closedByName: closedByEmployee.fullName,
         notes,
       }).returning();
-      
+
       return closureLog;
     });
   }
@@ -4942,7 +4950,7 @@ export class DatabaseStorage implements IStorage {
   async getArchivedWorkOrders(ethiopianYear?: number): Promise<WorkOrderArchiveWithParts[]> {
     // Fetch archived orders
     let archivedOrders;
-    
+
     if (ethiopianYear) {
       archivedOrders = await db
         .select()
@@ -4955,25 +4963,25 @@ export class DatabaseStorage implements IStorage {
         .from(workOrdersArchive)
         .orderBy(desc(workOrdersArchive.archivedAt));
     }
-    
+
     if (archivedOrders.length === 0) {
       return [];
     }
-    
+
     // Collect all original work order IDs (filter out null values and deduplicate)
     const workOrderIds = Array.from(new Set(
       archivedOrders
         .map(order => order.originalWorkOrderId)
         .filter((id): id is string => !!id)
     ));
-    
+
     if (workOrderIds.length === 0) {
       return archivedOrders.map(order => ({
         ...order,
         partsUsed: [],
       }));
     }
-    
+
     // Fetch all parts receipts for these work orders
     const receiptsData = await db
       .select({
@@ -4986,14 +4994,14 @@ export class DatabaseStorage implements IStorage {
       })
       .from(partsReceipts)
       .where(inArray(partsReceipts.workOrderId, workOrderIds as string[]));
-    
+
     // Get all unique spare part IDs
     const sparePartIds = Array.from(new Set(
       receiptsData
         .map((r: any) => r.sparePartId)
         .filter((id: any): id is string => !!id)
     ));
-    
+
     // Fetch spare parts details
     const partsMap = new Map<string, any>();
     if (sparePartIds.length > 0) {
@@ -5001,21 +5009,21 @@ export class DatabaseStorage implements IStorage {
         .select()
         .from(spareParts)
         .where(inArray(spareParts.id, sparePartIds as string[]));
-      
+
       parts.forEach((part: any) => {
         partsMap.set(part.id, part);
       });
     }
-    
+
     // Group receipts by work order ID and enrich with spare part details
     const partsByWorkOrder = new Map<string, PartUsedInfo[]>();
     receiptsData.forEach((receipt: any) => {
       if (!partsByWorkOrder.has(receipt.workOrderId)) {
         partsByWorkOrder.set(receipt.workOrderId, []);
       }
-      
+
       const part = receipt.sparePartId ? partsMap.get(receipt.sparePartId) : null;
-      
+
       partsByWorkOrder.get(receipt.workOrderId)!.push({
         id: receipt.receiptId,
         workOrderId: receipt.workOrderId,
@@ -5028,7 +5036,7 @@ export class DatabaseStorage implements IStorage {
         unitOfMeasure: null, // spare_parts doesn't have unitOfMeasure
       });
     });
-    
+
     // Attach parts to their respective orders
     return archivedOrders.map(order => ({
       ...order,
@@ -5038,11 +5046,11 @@ export class DatabaseStorage implements IStorage {
 
   async updatePlanningTargetsLockStatus(locked: boolean): Promise<void> {
     const [settings] = await db.select().from(systemSettings).limit(1);
-    
+
     if (settings) {
       await db
         .update(systemSettings)
-        .set({ 
+        .set({
           planningTargetsLocked: locked,
           updatedAt: new Date(),
         })
