@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, jsonb, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -1416,8 +1416,8 @@ export const insertEquipmentLocationSchema = createInsertSchema(equipmentLocatio
 export type Garage = typeof garages.$inferSelect;
 export type InsertGarage = z.infer<typeof insertGarageSchema>;
 export type Workshop = typeof workshops.$inferSelect;
-export type WorkshopMember = typeof workshopMembers.$inferSelect;
 export type InsertWorkshop = z.infer<typeof insertWorkshopSchema>;
+export type WorkshopMember = typeof workshopMembers.$inferSelect;
 export type InsertWorkshopMember = z.infer<typeof insertWorkshopMemberSchema>;
 export type Employee = typeof employees.$inferSelect;
 export type InsertEmployee = z.infer<typeof insertEmployeeSchema>;
@@ -2074,3 +2074,33 @@ export type PartUsedInfo = {
 export type WorkOrderArchiveWithParts = WorkOrderArchive & {
   partsUsed: PartUsedInfo[];
 };
+
+// Notifications table
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  recipientId: varchar("recipient_id").notNull().references(() => employees.id, { onDelete: "cascade" }),
+  actorId: varchar("actor_id").references(() => employees.id, { onDelete: "set null" }),
+  type: text("type").notNull().default("info"),
+  activityType: text("activity_type").notNull(),
+  message: text("message").notNull(),
+  read: boolean("read").default(false).notNull(),
+  data: jsonb("data"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  recipient: one(employees, {
+    fields: [notifications.recipientId],
+    references: [employees.id],
+    relationName: "receivedNotifications",
+  }),
+  actor: one(employees, {
+    fields: [notifications.actorId],
+    references: [employees.id],
+    relationName: "sentNotifications",
+  }),
+}));
+
+export const insertNotificationSchema = createInsertSchema(notifications);
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;

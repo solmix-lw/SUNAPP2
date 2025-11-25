@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Search, Package, Eye, AlertCircle, Upload, Image as ImageIcon, MapPin, Wrench, Clock, Video, Edit, Trash2, X, Plus, Download, FileSpreadsheet } from "lucide-react";
+import { Search, Package, Eye, AlertCircle, Upload, Image as ImageIcon, MapPin, Wrench, Clock, Video, Edit, Trash2, X, Plus, Download, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -56,6 +56,11 @@ export default function SparePartsPage() {
     installTimeEstimates: { beginner: 0, average: 0, expert: 0 },
   });
 
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [accumulatedParts, setAccumulatedParts] = useState<SparePart[]>([]);
+  const PAGE_SIZE = 50;
+
   // State for focused status view (all, low_stock, out_of_stock)
   const [focusedStatus, setFocusedStatus] = useState<string | null>(null);
 
@@ -101,9 +106,51 @@ export default function SparePartsPage() {
     return `$${numPrice.toFixed(2)}`;
   };
 
-  const { data: parts, isLoading } = useQuery<SparePart[]>({
-    queryKey: ["/api/parts"],
+  // Build query parameters for pagination
+  const queryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set('limit', PAGE_SIZE.toString());
+    params.set('offset', (page * PAGE_SIZE).toString());
+    if (searchTerm) params.set('search', searchTerm);
+    if (filterCategory !== 'all') params.set('category', filterCategory);
+    if (filterStatus !== 'all') params.set('stockStatus', filterStatus);
+    return params.toString();
+  }, [page, searchTerm, filterCategory, filterStatus, PAGE_SIZE]);
+
+  // Paginated parts query
+  const fetchParts = async () => {
+    const response = await fetch(`/api/parts?${queryParams}`);
+    if (!response.ok) throw new Error('Failed to fetch parts');
+    return (await response.json()) as { items: SparePart[]; total: number };
+  };
+  const { data: partsData, isLoading, isFetching } = useQuery<{ items: SparePart[]; total: number }, Error>({
+    queryKey: ['parts', queryParams],
+    queryFn: fetchParts,
   });
+
+
+  // Accumulate parts when new data arrives
+  useEffect(() => {
+    if (partsData) {
+      if (page === 0) {
+        setAccumulatedParts(partsData.items);
+      } else {
+        // Prevent duplicates when appending
+        setAccumulatedParts(prev => {
+          const newItems = partsData.items.filter(
+            newItem => !prev.some(existingItem => existingItem.id === newItem.id)
+          );
+          return [...prev, ...newItems];
+        });
+      }
+    }
+  }, [partsData, page]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setPage(0);
+    setAccumulatedParts([]);
+  }, [searchTerm, filterCategory, filterStatus]);
 
   // Get current user to check role
   const { data: authData } = useQuery<{ user: { role: string } }>({
@@ -113,6 +160,36 @@ export default function SparePartsPage() {
   // Check if user is CEO or Admin (case-insensitive)
   const userRole = authData?.user?.role?.toLowerCase();
   const isCEOorAdmin = userRole === "ceo" || userRole === "admin";
+
+  // Stats query for accurate total counts (respects search/category filters)
+  const statsParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (searchTerm) params.set('search', searchTerm);
+    if (filterCategory !== 'all') params.set('category', filterCategory);
+    return params.toString();
+  }, [searchTerm, filterCategory]);
+
+  const fetchStats = async () => {
+    const response = await fetch(`/api/parts/stats?${statsParams}`);
+    if (!response.ok) throw new Error('Failed to fetch stats');
+    return (await response.json()) as { total: number; lowStock: number; outOfStock: number };
+  };
+  const { data: stats } = useQuery<{ total: number; lowStock: number; outOfStock: number }, Error>({
+    queryKey: ['stats', statsParams],
+    queryFn: fetchStats,
+  });
+
+  // Fetch all unique categories
+  const fetchCategories = async () => {
+    const response = await fetch('/api/parts/categories');
+    if (!response.ok) throw new Error('Failed to fetch categories');
+    return (await response.json()) as string[];
+  };
+  const { data: categoriesData } = useQuery<string[], Error>({
+    queryKey: ['partCategories'],
+    queryFn: fetchCategories,
+  });
+
 
   const uploadImagesMutation = useMutation({
     mutationFn: async (files: FileList) => {
@@ -631,7 +708,12 @@ export default function SparePartsPage() {
     }
   };
 
-  const filteredParts = parts?.filter((part) => {
+  // Use partsData directly if accumulatedParts is empty (e.g. after filter change) but data is available
+  const currentParts = (page === 0 && accumulatedParts.length === 0 && partsData?.items)
+    ? partsData.items
+    : accumulatedParts;
+
+  const filteredParts = currentParts?.filter((part: SparePart) => {
     const matchesSearch =
       searchTerm === "" ||
       part.manualId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -645,7 +727,7 @@ export default function SparePartsPage() {
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
-  const categories = Array.from(new Set(parts?.map((p) => p.category) || []));
+  const categories = categoriesData || [];
 
   const getStockBadgeVariant = (status: string) => {
     switch (status) {
@@ -674,9 +756,9 @@ export default function SparePartsPage() {
   };
 
   // Calculate inventory statistics
-  const totalItems = parts?.length || 0;
-  const lowStockItems = parts?.filter(p => p.stockStatus === "low_stock").length || 0;
-  const outOfStockItems = parts?.filter(p => p.stockStatus === "out_of_stock").length || 0;
+  const totalItems = stats?.total ?? 0;
+  const lowStockItems = stats?.lowStock ?? 0;
+  const outOfStockItems = stats?.outOfStock ?? 0;
 
   // Handlers for clicking statistics cards
   const handleViewAllItems = () => {
@@ -684,6 +766,7 @@ export default function SparePartsPage() {
     setFilterStatus("all");
     setSearchTerm("");
     setFilterCategory("all");
+    setPage(0);
   };
 
   const handleViewLowStock = () => {
@@ -691,6 +774,7 @@ export default function SparePartsPage() {
     setFilterStatus("low_stock");
     setSearchTerm("");
     setFilterCategory("all");
+    setPage(0);
   };
 
   const handleViewOutOfStock = () => {
@@ -698,6 +782,7 @@ export default function SparePartsPage() {
     setFilterStatus("out_of_stock");
     setSearchTerm("");
     setFilterCategory("all");
+    setPage(0);
   };
 
   const handleBackToCatalog = () => {
@@ -757,7 +842,7 @@ export default function SparePartsPage() {
           {/* Inventory Statistics Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Card
-              className="cursor-pointer hover-elevate active-elevate-2"
+              className={`cursor-pointer hover-elevate active-elevate-2 transition-all ${filterStatus === 'all' ? 'ring-2 ring-primary border-primary' : ''}`}
               onClick={handleViewAllItems}
               data-testid="card-total-items"
             >
@@ -772,7 +857,7 @@ export default function SparePartsPage() {
             </Card>
 
             <Card
-              className="cursor-pointer hover-elevate active-elevate-2"
+              className={`cursor-pointer hover-elevate active-elevate-2 transition-all ${filterStatus === 'low_stock' ? 'ring-2 ring-primary border-primary' : ''}`}
               onClick={handleViewLowStock}
               data-testid="card-low-stock"
             >
@@ -787,7 +872,7 @@ export default function SparePartsPage() {
             </Card>
 
             <Card
-              className="cursor-pointer hover-elevate active-elevate-2"
+              className={`cursor-pointer hover-elevate active-elevate-2 transition-all ${filterStatus === 'out_of_stock' ? 'ring-2 ring-primary border-primary' : ''}`}
               onClick={handleViewOutOfStock}
               data-testid="card-out-of-stock"
             >
@@ -802,22 +887,7 @@ export default function SparePartsPage() {
             </Card>
           </div>
 
-          {/* Back Navigation when Focused Status is Active */}
-          {focusedStatus && (
-            <div className="flex items-center gap-3 mb-2">
-              <Button
-                variant="outline"
-                onClick={handleBackToCatalog}
-                data-testid="button-back-to-catalog"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                Back to Full Catalog
-              </Button>
-              <div className="text-sm text-muted-foreground">
-                Viewing: {focusedStatus === "all" ? "All Items" : focusedStatus === "low_stock" ? "Low Stock Items" : "Out of Stock Items"}
-              </div>
-            </div>
-          )}
+
 
           <div className="flex flex-col gap-3">
             <div className="relative">
@@ -838,7 +908,7 @@ export default function SparePartsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
-                  {categories.map((cat) => (
+                  {categories.map((cat: string) => (
                     <SelectItem key={cat} value={cat}>
                       {cat}
                     </SelectItem>
@@ -873,7 +943,7 @@ export default function SparePartsPage() {
       </div>
 
       <div className="flex-1 p-3 md:p-6">
-        {isLoading ? (
+        {isLoading || (isFetching && (!filteredParts || filteredParts.length === 0)) ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(6)].map((_, i) => (
               <Card key={i}>
@@ -889,95 +959,122 @@ export default function SparePartsPage() {
             ))}
           </div>
         ) : filteredParts && filteredParts.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredParts.map((part) => (
-              <Card key={part.id} className="hover-elevate flex flex-col" data-testid={`card-part-${part.id}`}>
-                {part.imageUrls && part.imageUrls.length > 0 && (
-                  <div className="aspect-video w-full bg-muted overflow-hidden rounded-t-lg relative">
-                    <img
-                      src={part.imageUrls[0]}
-                      alt={part.partName}
-                      className="w-full h-full object-cover"
-                      data-testid={`img-part-${part.id}`}
-                    />
-                    {part.imageUrls.length > 1 && (
-                      <div className="absolute bottom-2 right-2 bg-background/80 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium">
-                        +{part.imageUrls.length - 1} more
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredParts?.map((part: SparePart) => (
+                <Card key={part.id} className="hover-elevate flex flex-col" data-testid={`card-part-${part.id}`}>
+                  {part.imageUrls && part.imageUrls.length > 0 && (
+                    <div className="aspect-video w-full bg-muted overflow-hidden rounded-t-lg relative">
+                      <img
+                        src={part.imageUrls[0]}
+                        alt={part.partName}
+                        className="w-full h-full object-cover"
+                        data-testid={`img-part-${part.id}`}
+                      />
+                      {part.imageUrls.length > 1 && (
+                        <div className="absolute bottom-2 right-2 bg-background/80 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium">
+                          +{part.imageUrls.length - 1} more
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="text-base truncate">{part.partName}</CardTitle>
+                        <p className="text-xs font-mono text-muted-foreground mt-1">
+                          {part.partNumber}
+                        </p>
+                      </div>
+                      <Badge variant={getStockBadgeVariant(part.stockStatus)} className="text-xs">
+                        {getStockLabel(part.stockStatus)}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex-1 space-y-3 text-sm">
+                    <div>
+                      <Badge variant="outline" className="text-xs">
+                        {part.category}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Price:</span>
+                      <span className="font-semibold text-lg">{part.price ? formatPrice(part.price) : "N/A"}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Stock:</span>
+                      <span className="font-mono">{part.stockQuantity !== null ? part.stockQuantity : "N/A"}</span>
+                    </div>
+                    {part.description && (
+                      <p className="text-muted-foreground text-xs line-clamp-2">
+                        {part.description}
+                      </p>
+                    )}
+                  </CardContent>
+                  <CardFooter className="pt-4 flex flex-col gap-2">
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setSelectedPart(part)}
+                      data-testid={`button-view-details-${part.id}`}
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      View Details
+                    </Button>
+                    {isCEOorAdmin && (
+                      <div className="flex gap-2 w-full">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => openEditDialog(part)}
+                          data-testid={`button-edit-${part.id}`}
+                        >
+                          <Edit className="h-4 w-4 mr-2" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => openDeleteDialog(part)}
+                          data-testid={`button-delete-${part.id}`}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </Button>
                       </div>
                     )}
-                  </div>
-                )}
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <CardTitle className="text-base truncate">{part.partName}</CardTitle>
-                      <p className="text-xs font-mono text-muted-foreground mt-1">
-                        {part.partNumber}
-                      </p>
-                    </div>
-                    <Badge variant={getStockBadgeVariant(part.stockStatus)} className="text-xs">
-                      {getStockLabel(part.stockStatus)}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="flex-1 space-y-3 text-sm">
-                  <div>
-                    <Badge variant="outline" className="text-xs">
-                      {part.category}
-                    </Badge>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Price:</span>
-                    <span className="font-semibold text-lg">{part.price ? formatPrice(part.price) : "N/A"}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Stock:</span>
-                    <span className="font-mono">{part.stockQuantity !== null ? part.stockQuantity : "N/A"}</span>
-                  </div>
-                  {part.description && (
-                    <p className="text-muted-foreground text-xs line-clamp-2">
-                      {part.description}
-                    </p>
-                  )}
-                </CardContent>
-                <CardFooter className="pt-4 flex flex-col gap-2">
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
+
+            {/* Load More Button */}
+            {accumulatedParts.length < (
+              filterStatus === 'low_stock' ? (stats?.lowStock || 0) :
+                filterStatus === 'out_of_stock' ? (stats?.outOfStock || 0) :
+                  (stats?.total || 0)
+            ) && (
+                <div className="mt-8 flex justify-center">
                   <Button
                     variant="outline"
-                    className="w-full"
-                    onClick={() => setSelectedPart(part)}
-                    data-testid={`button-view-details-${part.id}`}
+                    size="lg"
+                    onClick={() => setPage(p => p + 1)}
+                    disabled={isFetching}
                   >
-                    <Eye className="h-4 w-4 mr-2" />
-                    View Details
+                    {isFetching ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      "Load More"
+                    )}
                   </Button>
-                  {isCEOorAdmin && (
-                    <div className="flex gap-2 w-full">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => openEditDialog(part)}
-                        data-testid={`button-edit-${part.id}`}
-                      >
-                        <Edit className="h-4 w-4 mr-2" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => openDeleteDialog(part)}
-                        data-testid={`button-delete-${part.id}`}
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Delete
-                      </Button>
-                    </div>
-                  )}
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+                </div>
+              )}
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center h-[400px] text-center">
             <Package className="h-12 w-12 text-muted-foreground mb-4" />

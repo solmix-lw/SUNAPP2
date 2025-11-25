@@ -10,6 +10,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useQuery } from "@tanstack/react-query";
@@ -30,22 +31,22 @@ export function AppSidebar() {
 
   const user = (authData as any)?.user;
   const permissions = (authData as any)?.user?.pagePermissions || [];
-  
+
   // Helper function to check if user has access to a page
   const hasPageAccess = (pagePath: string): boolean => {
     // CEO and Admin users always have access to all pages
     if (user?.role?.toLowerCase() === 'ceo' || user?.role?.toLowerCase() === 'admin') {
       return true;
     }
-    
+
     // Check if there's an explicit permission for this page
     const permission = permissions.find((p: any) => p.pagePath === pagePath);
-    
+
     // If no permission record exists, default to allowing access (backward compatibility)
     if (!permission) {
       return true;
     }
-    
+
     // Otherwise, use the isAllowed value
     return permission.isAllowed;
   };
@@ -200,9 +201,9 @@ export function AppSidebar() {
         <div className="flex items-center gap-2">
           {(appCustomizations as any)?.logoUrl ? (
             <div className="flex h-9 w-9 items-center justify-center">
-              <img 
-                src={(appCustomizations as any).logoUrl} 
-                alt="Company Logo" 
+              <img
+                src={(appCustomizations as any).logoUrl}
+                alt="Company Logo"
                 className="max-h-full max-w-full object-contain"
                 data-testid="img-sidebar-logo"
               />
@@ -238,7 +239,7 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        
+
         <SidebarGroup>
           <SidebarGroupLabel>{t("garageManagement")}</SidebarGroupLabel>
           <SidebarGroupContent>
@@ -257,6 +258,11 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-    </Sidebar>
+      <SidebarFooter className="p-4 border-t">
+        <div className="text-xs text-muted-foreground text-center">
+          {/* Footer content can be added here if needed */}
+        </div>
+      </SidebarFooter>
+    </Sidebar >
   );
 }

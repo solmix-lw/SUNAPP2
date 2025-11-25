@@ -182,6 +182,7 @@ export interface IStorage {
     limit?: number;
     offset?: number;
   }): Promise<{ items: SparePartWithCompatibility[]; total: number }>;
+  getPartCategories(): Promise<string[]>;
 
   // Compatibility operations
   addPartCompatibility(partId: string, make: string, model?: string): Promise<void>;
@@ -234,6 +235,7 @@ export interface IStorage {
   // Employees
   getAllEmployees(role?: string, garageId?: string): Promise<Employee[]>;
   getEmployeeById(id: string): Promise<Employee | undefined>;
+  getEmployeesByRole(role: string): Promise<Employee[]>;
   createEmployee(data: InsertEmployee): Promise<Employee>;
   updateEmployee(id: string, data: Partial<InsertEmployee>): Promise<Employee>;
   updateEmployeePhoto(id: string, photoUrl: string): Promise<Employee | undefined>;
@@ -779,6 +781,15 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async getPartCategories(): Promise<string[]> {
+    const result = await db
+      .select({ category: spareParts.category })
+      .from(spareParts)
+      .groupBy(spareParts.category);
+
+    return result.map(r => r.category).filter(Boolean) as string[];
+  }
+
   // Compatibility operations
   async addPartCompatibility(partId: string, make: string, model?: string): Promise<void> {
     await db.insert(partCompatibility).values({ partId, make, model });
@@ -1261,6 +1272,10 @@ export class DatabaseStorage implements IStorage {
   async getEmployeeById(id: string): Promise<Employee | undefined> {
     const [result] = await db.select().from(employees).where(eq(employees.id, id));
     return result || undefined;
+  }
+
+  async getEmployeesByRole(role: string): Promise<Employee[]> {
+    return await db.select().from(employees).where(eq(employees.role, role));
   }
 
   async createEmployee(data: InsertEmployee): Promise<Employee> {

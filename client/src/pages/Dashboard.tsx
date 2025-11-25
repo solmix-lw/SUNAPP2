@@ -27,6 +27,42 @@ import { getFiscalQuarterRange } from "@shared/fiscal";
 
 const COLORS = ["#2563eb", "#7c3aed", "#dc2626", "#f59e0b", "#10b981", "#f97316", "#8b5cf6"];
 
+// Define the shape of the dashboard analytics data returned from the API
+interface DashboardAnalytics {
+  kpis: {
+    totalWorkOrders: number;
+    totalPlanned: number;
+    accomplishmentRate: number;
+    totalCost: number;
+    activeWorkshops: number;
+  };
+  costAnalytics: {
+    labor: { planned: number; actual: number };
+    lubricants: { planned: number; actual: number };
+    outsource: { planned: number; actual: number };
+    spareParts?: { planned?: number; actual?: number };
+    totalMaintenanceCost: number;
+    avgCostPerWorkOrder: number;
+    costVariancePct: number;
+    costVarianceAmount: number;
+  };
+  costCharts: {
+    monthlyTrends: any[];
+    breakdown: { labor: number; lubricants: number; outsource: number };
+    byEquipmentType: any[];
+    byGarage: any[];
+  };
+  costBreakdown?: {
+    directMaintenance: number;
+    overtime: number;
+    outsource: number;
+    overhead: number;
+  };
+  quarterlyData: any[];
+  workshopPerformance: any[];
+  workshops: any[];
+}
+
 export default function Dashboard() {
   const { t } = useLanguage();
   const [timePeriod, setTimePeriod] = useState<string>("annual");
@@ -82,7 +118,7 @@ export default function Dashboard() {
   };
 
   // Fetch dashboard analytics data
-  const { data: analyticsData, isLoading } = useQuery({
+  const { data: analyticsData, isLoading } = useQuery<DashboardAnalytics>({
     queryKey: [`/api/dashboard/analytics?${buildQueryParams()}`],
   });
 
@@ -877,7 +913,7 @@ export default function Dashboard() {
 
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Annual Cost Distribution</CardTitle>
+                      <CardTitle className="text-base">Total Work Order Cost Breakdown</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <ResponsiveContainer width="100%" height={300}>
@@ -887,12 +923,15 @@ export default function Dashboard() {
                             cx="50%"
                             cy="50%"
                             labelLine={false}
-                            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
+                            label={({ name, percent }) =>
+                              percent > 0.05 ? `${name}: ${(percent * 100).toFixed(0)}%` : null
+                            }
                             outerRadius={80}
                             fill="#8884d8"
                             dataKey="value"
+                            data-testid="pie-total-cost-breakdown"
                           >
-                            {costBreakdown.map((entry: any, index: number) => (
+                            {costBreakdown.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={entry.color} />
                             ))}
                           </Pie>
@@ -902,66 +941,29 @@ export default function Dashboard() {
                               border: "1px solid hsl(var(--border))",
                               borderRadius: "var(--radius)",
                             }}
-                            formatter={(value: any) => `${(value / 1000000).toFixed(2)}M ETB`}
                           />
+                          <Legend />
                         </PieChart>
                       </ResponsiveContainer>
                     </CardContent>
                   </Card>
                 </div>
-
-                {/* Workshop Cost Breakdown */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Workshop Cost Analysis</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {workshopPerformance.map((workshop: any, index: number) => (
-                        <div key={index} className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <p className="text-sm font-medium">{workshop.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                Avg Cost: {(workshop.avgCost / 1000).toFixed(2)}K ETB
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-sm font-bold">
-                                {(workshop.totalCost / 1000000).toFixed(2)}M ETB
-                              </p>
-                            </div>
-                          </div>
-                          <div className="w-full bg-muted rounded-full h-2">
-                            <div
-                              className="h-2 rounded-full transition-all"
-                              style={{
-                                width: `${(workshop.totalCost / kpis.totalCost) * 100}%`,
-                                backgroundColor: COLORS[index % COLORS.length],
-                              }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
               </>
             )}
           </>
         )}
       </div>
 
-      {/* Cost Drilldown Dialog */}
+      {/* Cost Drill-down Dialog */}
       <CostDrilldownDialog
         open={drilldownOpen}
         onOpenChange={setDrilldownOpen}
         context={drilldownContext}
-        workshopId={workshopId}
         timePeriod={timePeriod}
+        year={year}
+        workshopId={workshopId}
         startDate={startDate}
         endDate={endDate}
-        year={year}
         useCustomRange={useCustomRange}
         weekStartDate={weekStartDate}
         dailyDate={dailyDate}

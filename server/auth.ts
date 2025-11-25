@@ -152,8 +152,8 @@ export function isSupervisorOrCEO(req: any, res: Response, next: NextFunction) {
   if (role === "supervisor" || role === "ceo" || role === "admin") {
     return next();
   }
-  res.status(403).json({ 
-    message: "Access denied. Cost entry is restricted to supervisors, admin, and CEO." 
+  res.status(403).json({
+    message: "Access denied. Cost entry is restricted to supervisors, admin, and CEO."
   });
 }
 
@@ -163,14 +163,14 @@ export function hasRole(user: any, ...allowedRoles: string[]): boolean {
   if (!user || !user.role) {
     return false;
   }
-  
+
   const userRole = user.role.toLowerCase();
-  
+
   // Admin has full access to everything
   if (userRole === 'admin') {
     return true;
   }
-  
+
   // Check if user has any of the allowed roles (case-insensitive)
   return allowedRoles.some(role => userRole === role.toLowerCase());
 }
@@ -181,13 +181,13 @@ export function requireRole(...allowedRoles: string[]) {
     if (!req.user) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    
+
     if (hasRole(req.user, ...allowedRoles)) {
       return next();
     }
-    
-    res.status(403).json({ 
-      message: `Access denied. Required role(s): ${allowedRoles.join(', ')} (or admin for full access)` 
+
+    res.status(403).json({
+      message: `Access denied. Required role(s): ${allowedRoles.join(', ')} (or admin for full access)`
     });
   };
 }
@@ -196,7 +196,14 @@ export function requireRole(...allowedRoles: string[]) {
 declare global {
   namespace Express {
     interface Request {
-      user?: Omit<User, "password"> | null;
+      user?: {
+        id: string;
+        username: string;
+        fullName: string | null;
+        role: string;
+        language: string | null;
+        createdAt: Date | null;
+      } | null;
     }
   }
 }

@@ -5,6 +5,7 @@ import { db } from "./db";
 import { eq, or, ilike, sql, desc, and, inArray, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import {
+
   insertEquipmentCategorySchema,
   insertEquipmentSchema,
   insertSparePartSchema,
@@ -39,6 +40,7 @@ import {
   workOrderGarages,
   workOrderWorkshops,
   workshops,
+  garages,
   workOrders,
   itemRequisitions,
   itemRequisitionLines,
@@ -47,8 +49,10 @@ import {
   partsReceipts,
   workOrderMemberships,
   workOrderTimeTracking,
+  notifications,
+  insertNotificationSchema,
 } from "@shared/schema";
-import type { Employee } from "@shared/schema";
+import type { Employee, InsertEmployee } from "@shared/schema";
 import multer from "multer";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
@@ -98,6 +102,33 @@ const uploadVideo = multer({
     }
   }
 });
+
+// Helper function to create in-app notifications
+async function createInAppNotification(
+  recipientId: string,
+  activityType: string,
+  message: string,
+  data: Record<string, any> = {},
+  actorId: string | null = null,
+  type: "info" | "success" | "warning" | "error" = "info"
+) {
+  try {
+    // Don't notify yourself
+    if (actorId && recipientId === actorId) return;
+
+    await db.insert(notifications).values({
+      recipientId,
+      actorId,
+      type,
+      activityType,
+      message,
+      data,
+      read: false,
+    });
+  } catch (error) {
+    console.error("Error creating in-app notification:", error);
+  }
+}
 
 // Configure multer for 3D model files
 const upload3DModel = multer({
@@ -293,299 +324,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentCategorySchema.parse(req.body);
       const category = await storage.createEquipmentCategory(validatedData);
-
-      // Send email notification if user is admin
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'created',
-          'equipment_category',
-          category.id,
-          req.user.username || 'unknown',
-          validatedData
-        ));
-      }
-
       res.status(201).json(category);
     } catch (error) {
       console.error("Error creating equipment category:", error);
-      res.status(500).json({ error: "Failed to create equipment category" });
+      res.status(400).json({ error: "Invalid equipment category data" });
     }
   });
 
-  // Protected: Only CEO/Admin can update categories
-  app.put("/api/equipment-categories/:id", isCEOOrAdmin, async (req, res) => {
-    try {
-      const validatedData = insertEquipmentCategorySchema.partial().parse(req.body);
-      const category = await storage.updateEquipmentCategory(req.params.id, validatedData);
-
-      if (!category) {
-        return res.status(404).json({ error: "Category not found" });
-      }
-
-      // Send email notification if user is admin
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'updated',
-          'equipment_category',
-          category.id,
-          req.user.username || 'unknown',
-          validatedData
-        ));
-      }
-
-      res.json(category);
-    } catch (error) {
-      console.error("Error updating equipment category:", error);
-      res.status(500).json({ error: "Failed to update equipment category" });
-    }
-  });
-
-  // Protected: Only CEO/Admin can delete categories
-  app.delete("/api/equipment-categories/:id", isCEOOrAdmin, async (req, res) => {
-    try {
-      const deleted = await storage.deleteEquipmentCategory(req.params.id);
-
-      if (!deleted) {
-        return res.status(404).json({ error: "Category not found" });
-      }
-
-      // Send email notification if user is admin
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'deleted',
-          'equipment_category',
-          req.params.id,
-          req.user.username || 'unknown',
-          { id: req.params.id }
-        ));
-      }
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting equipment category:", error);
-      res.status(500).json({ error: "Failed to delete equipment category" });
-    }
-  });
-
-  // Protected: Only CEO/Admin can delete all categories
-  app.delete("/api/equipment-categories", isCEOOrAdmin, async (req, res) => {
-    try {
-      const deletedCount = await storage.deleteAllEquipmentCategories();
-
-      // Send email notification if user is admin
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'deleted',
-          'equipment_category',
-          'all',
-          req.user.username || 'unknown',
-          { deletedCount }
-        ));
-      }
-
-      res.json({ success: true, deletedCount });
-    } catch (error) {
-      console.error("Error deleting all equipment categories:", error);
-      res.status(500).json({ error: "Failed to delete all equipment categories" });
-    }
-  });
-
-  // Excel Import/Export - Equipment
-  // Download equipment Excel template
-  app.get("/api/equipment/template", isAuthenticated, async (req, res) => {
-    try {
-      const buffer = generateExcelTemplate(equipmentTemplateConfig);
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=equipment_template.xlsx');
-      res.send(buffer);
-    } catch (error) {
-      console.error("Error generating equipment template:", error);
-      res.status(500).json({ error: "Failed to generate template" });
-    }
-  });
-
-  // Import equipment from Excel
-  app.post("/api/equipment/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
-    try {
-      let result: any;
-
-      // Check if we have JSON data from the preview dialog
-      if (req.body.equipment) {
-        // Validate the JSON data
-        const equipmentList = req.body.equipment;
-        if (!Array.isArray(equipmentList)) {
-          return res.status(400).json({ error: "Invalid data format: expected array" });
-        }
-
-        // We can treat this as "validated" data since it came from the preview, 
-        // but we should still ensure it matches the schema if possible.
-        // For now, we'll trust the structure matches InsertEquipment.
-        result = {
-          data: equipmentList,
-          errors: [],
-          summary: {
-            total: equipmentList.length,
-            valid: equipmentList.length,
-            invalid: 0,
-            ignored: 0
-          }
-        };
-      } else if (req.file) {
-        // Parse Excel file
-        const rawData = parseExcelFile(req.file.buffer);
-
-        // Validate and transform data
-        result = validateAndTransformExcelData(
-          rawData,
-          equipmentTemplateConfig,
-          insertEquipmentSchema.partial({ categoryId: true }),
-          (row) => {
-            const hasPriceValue =
-              row.price !== undefined && row.price !== null && row.price !== "";
-            const numericPrice = hasPriceValue ? Number(row.price) : undefined;
-
-            return {
-              ...row,
-              price:
-                numericPrice !== undefined && !Number.isNaN(numericPrice)
-                  ? numericPrice.toString()
-                  : undefined,
-            };
-          }
-        );
-      } else {
-        return res.status(400).json({ error: "No file uploaded or data provided" });
-      }
-
-      // Allow partial imports - proceed if we have any valid data
-      if (!result.data || result.data.length === 0) {
-        return res.status(400).json({
-          error: "No valid data found to import",
-          errors: result.errors,
-          summary: result.summary,
-        });
-      }
-
-      // Bulk insert using transaction
-      const importResults = await db.transaction(async (tx: any) => {
-        let created = 0;
-        let updated = 0;
-        let skipped = 0;
-        const errors: any[] = [];
-
-        // Added check to ensure result.data is defined
-        if (!result.data) {
-          throw new Error("Validated data is undefined");
-        }
-
-        // Optimization: Bulk fetch existing equipment
-        const assetNos = result.data.map((e: any) => e.assetNo).filter(Boolean) as string[];
-        const plateNos = result.data.map((e: any) => e.plateNo).filter(Boolean) as string[];
-
-        const existingEquipment = await tx.query.equipment.findMany({
-          where: or(
-            assetNos.length > 0 ? inArray(equipment.assetNo, assetNos) : undefined,
-            plateNos.length > 0 ? inArray(equipment.plateNo, plateNos) : undefined
-          )
-        });
-
-        const existingMap = new Map();
-        existingEquipment.forEach((e: any) => {
-          if (e.assetNo) existingMap.set(`asset:${e.assetNo}`, e);
-          if (e.plateNo) existingMap.set(`plate:${e.plateNo}`, e);
-        });
-
-        const toInsert: any[] = [];
-        const toUpdate: any[] = [];
-
-        for (const equip of result.data) {
-          // Check if equipment already exists
-          let existing = null;
-          if (equip.assetNo && existingMap.has(`asset:${equip.assetNo}`)) {
-            existing = existingMap.get(`asset:${equip.assetNo}`);
-          } else if (equip.plateNo && existingMap.has(`plate:${equip.plateNo}`)) {
-            existing = existingMap.get(`plate:${equip.plateNo}`);
-          }
-
-          if (existing) {
-            toUpdate.push({ ...equip, id: existing.id });
-          } else {
-            toInsert.push(equip);
-          }
-        }
-
-        // Bulk Insert
-        if (toInsert.length > 0) {
-          try {
-            // Insert in chunks of 100 to avoid parameter limits
-            for (let i = 0; i < toInsert.length; i += 100) {
-              const chunk = toInsert.slice(i, i + 100);
-              await tx.insert(equipment).values(chunk);
-              created += chunk.length;
-            }
-          } catch (error) {
-            console.error("Bulk insert error:", error);
-            // Fallback to individual inserts if bulk fails
-            for (const item of toInsert) {
-              try {
-                await tx.insert(equipment).values(item);
-                created++;
-              } catch (e) {
-                skipped++;
-                errors.push({
-                  assetNo: item.assetNo || item.plateNo,
-                  error: e instanceof Error ? e.message : 'Insert error',
-                });
-              }
-            }
-          }
-        }
-
-        // Parallel Updates
-        await Promise.all(toUpdate.map(async (item) => {
-          try {
-            const { id, ...data } = item;
-            await tx.update(equipment)
-              .set(data)
-              .where(eq(equipment.id, id));
-            updated++;
-          } catch (error) {
-            skipped++;
-            errors.push({
-              assetNo: item.assetNo || item.plateNo,
-              error: error instanceof Error ? error.message : 'Update error',
-            });
-          }
-        }));
-
-        return { created, updated, skipped, errors };
-      });
-
-      res.json({
-        success: true,
-        results: importResults
-      });
-    } catch (error) {
-      console.error("Error importing equipment:", error);
-      res.status(500).json({ error: "Failed to import equipment" });
-    }
-  });
-
+  // Equipment endpoints
   app.get("/api/equipment", async (req, res) => {
     try {
-      const searchTerm = req.query.search as string | undefined;
-      const equipmentType = req.query.equipmentType as string | undefined;
-      const make = req.query.make as string | undefined;
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-
-      const result = await storage.searchEquipment({
-        searchTerm,
-        equipmentType: equipmentType !== "all" ? equipmentType : undefined,
-        make: make !== "all" ? make : undefined,
-        limit,
-        offset,
-      });
+      const equipment = await storage.getAllEquipment();
 
       // Prevent caching to ensure fresh data
       res.set({
@@ -594,7 +343,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Expires': '0'
       });
 
-      res.json(result.items);
+      res.json(equipment);
     } catch (error) {
       console.error("Error fetching equipment:", error);
       res.status(500).json({ error: "Failed to fetch equipment" });
@@ -614,13 +363,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Protected: Only CEO/Admin can create equipment
   app.post("/api/equipment", isCEOOrAdmin, async (req, res) => {
     try {
       const validatedData = insertEquipmentSchema.parse(req.body);
       const equipment = await storage.createEquipment(validatedData);
 
-      // Send email notification if user is admin (CEO gets notified about admin actions)
+      // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created',
@@ -638,12 +386,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Protected: Only CEO/Admin can update equipment
   app.put("/api/equipment/:id", isCEOOrAdmin, async (req, res) => {
     try {
-      const validatedData = insertEquipmentSchema.parse(req.body);
+      const validatedData = insertEquipmentSchema.partial().parse(req.body);
       const equipment = await storage.updateEquipment(req.params.id, validatedData);
-
       if (!equipment) {
         return res.status(404).json({ error: "Equipment not found" });
       }
@@ -666,34 +412,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Protected: Only CEO/Admin can delete equipment
   app.delete("/api/equipment/:id", isCEOOrAdmin, async (req, res) => {
     try {
-      const deleted = await storage.deleteEquipment(req.params.id);
+      const equipmentId = req.params.id;
+      const equipment = await storage.getEquipmentById(equipmentId);
 
-      if (!deleted) {
+      if (!equipment) {
         return res.status(404).json({ error: "Equipment not found" });
       }
+
+      await storage.deleteEquipment(equipmentId);
 
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted',
           'equipment',
-          req.params.id,
+          equipmentId,
           req.user.username || 'unknown',
-          { id: req.params.id }
+          { model: equipment.model, plateNo: equipment.plateNo }
         ));
       }
 
-      res.json({ success: true });
+      res.json({ success: true, message: "Equipment deleted successfully" });
     } catch (error) {
       console.error("Error deleting equipment:", error);
       res.status(500).json({ error: "Failed to delete equipment" });
     }
   });
 
-  // Protected: Only CEO/Admin can delete all equipment
   app.post("/api/equipment/delete-all", isCEOOrAdmin, async (req, res) => {
     try {
       const deletedCount = await storage.deleteAllEquipment();
@@ -755,7 +502,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Validate all equipment data
-      const validatedEquipment = equipmentList.map(item => insertEquipmentSchema.parse(item));
+      const validatedEquipment = equipmentList.map(item => {
+        // Ensure fields that should be strings are converted if they are numbers
+        if (typeof item.machineSerial === 'number') {
+          item.machineSerial = String(item.machineSerial);
+        }
+        if (typeof item.engineNumber === 'number') {
+          item.engineNumber = String(item.engineNumber);
+        }
+        return insertEquipmentSchema.parse(item);
+      });
 
       // Create all equipment
       const created = await Promise.all(
@@ -779,6 +535,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(400).json({ error: "Invalid equipment data" });
     }
   });
+
+  // Download equipment Excel template
+  app.get("/api/equipment/template", isAuthenticated, async (req, res) => {
+    try {
+      const buffer = generateExcelTemplate(equipmentTemplateConfig);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=equipment_template.xlsx');
+      res.send(buffer);
+    } catch (error) {
+      console.error("Error generating equipment template:", error);
+      res.status(500).json({ error: "Failed to generate template" });
+    }
+  });
+
 
   // Import spare parts from Excel (or JSON preview)
   // Import spare parts from Excel (or JSON preview)
@@ -969,10 +739,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset,
       });
 
-      res.json(result.items);
+      res.json(result);
     } catch (error) {
       console.error("Error fetching parts:", error);
       res.status(500).json({ error: "Failed to fetch parts" });
+    }
+  });
+
+
+
+  // Get all unique part categories
+  app.get("/api/parts/categories", async (_req, res) => {
+    try {
+      const categories = await storage.getPartCategories();
+      res.json(categories);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  // Statistics endpoint for spare parts counts
+  app.get("/api/parts/stats", async (req, res) => {
+    try {
+      const searchTerm = req.query.search as string | undefined;
+      const category = req.query.category as string | undefined;
+
+      // Get total count (with search/category filters)
+      const totalResult = await storage.searchParts({
+        searchTerm,
+        category: category !== "all" ? category : undefined,
+        limit: 0, // Just get the count
+      });
+
+      // Get low stock count (with search/category filters)
+      const lowStockResult = await storage.searchParts({
+        searchTerm,
+        category: category !== "all" ? category : undefined,
+        stockStatus: "low_stock",
+        limit: 0,
+      });
+
+      // Get out of stock count (with search/category filters)
+      const outOfStockResult = await storage.searchParts({
+        searchTerm,
+        category: category !== "all" ? category : undefined,
+        stockStatus: "out_of_stock",
+        limit: 0,
+      });
+
+      res.json({
+        total: totalResult.total,
+        lowStock: lowStockResult.total,
+        outOfStock: outOfStockResult.total,
+      });
+    } catch (error) {
+      console.error("Error fetching parts stats:", error);
+      res.status(500).json({ error: "Failed to fetch parts statistics" });
     }
   });
 
@@ -1671,7 +1494,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         let skipped = 0;
         const errors: any[] = [];
 
-        const employeesData = result.data!;
+
+        const employeesData = result.data! as InsertEmployee[];
 
         for (const employee of employeesData) {
           try {
@@ -1683,12 +1507,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (existing) {
               // Update existing employee
               await tx.update(employees)
-                .set(employee)
+                .set(employee as any)
                 .where(eq(employees.employeeId, employee.employeeId));
               updated++;
             } else {
               // Insert new employee
-              await tx.insert(employees).values(employee);
+              await tx.insert(employees).values(employee as any);
               created++;
             }
           } catch (error) {
@@ -1699,6 +1523,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             });
           }
         }
+
 
 
         return { created, updated, skipped, errors };
@@ -3381,7 +3206,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate spare parts costs for each work order
       // This is needed because spare parts costs are not stored on the work order directly
       if (results.length > 0) {
-        const workOrderIds = results.map(r => r.id);
+        const workOrderIds = results.map((r: typeof results[number]) => r.id);
 
         // Fetch parts receipts
         const receipts = await db
@@ -3394,7 +3219,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .where(inArray(partsReceipts.workOrderId, workOrderIds));
 
         // Get unique part IDs to fetch prices
-        const partIds = [...new Set(receipts.map(r => r.sparePartId).filter(Boolean))];
+        // Get unique part IDs to fetch prices
+        const partIds = Array.from(new Set(receipts.map((r: typeof receipts[number]) => r.sparePartId).filter(Boolean))) as string[];
         const partPrices = new Map();
 
         if (partIds.length > 0) {
@@ -3402,13 +3228,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .select({
               id: spareParts.id,
               price: spareParts.price,
-              name: spareParts.name,
+              name: spareParts.partName,
               partNumber: spareParts.partNumber
             })
             .from(spareParts)
             .where(inArray(spareParts.id, partIds));
 
-          parts.forEach(p => {
+          parts.forEach((p: typeof parts[number]) => {
             if (p.price) {
               partPrices.set(p.id, {
                 price: parseFloat(p.price),
@@ -3423,7 +3249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const sparePartsCosts = new Map();
         const partsUsedMap = new Map();
 
-        receipts.forEach(r => {
+        receipts.forEach((r: typeof receipts[number]) => {
           if (r.workOrderId && r.sparePartId) {
             const partInfo = partPrices.get(r.sparePartId);
             const price = partInfo?.price || 0;
@@ -3448,7 +3274,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         // Merge costs and parts list into results
-        const enrichedResults = results.map(order => {
+        const enrichedResults = results.map((order: typeof results[number]) => {
           const sparePartCost = sparePartsCosts.get(order.id) || 0;
           const currentTotal = parseFloat(order.totalActualCost || '0');
           const partsUsed = partsUsedMap.get(order.id) || [];
@@ -3529,6 +3355,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await sendCEONotification(createNotification(
           'created', 'work_order', workOrder.id, req.user.username || 'unknown', validatedData
         ));
+      }
+
+      // Notify CEO/Admin via in-app notification
+      const admins = await storage.getEmployeesByRole("admin");
+      const ceo = await storage.getEmployeesByRole("ceo");
+      const recipients = [...admins, ...ceo];
+
+      for (const recipient of recipients) {
+        await createInAppNotification(
+          recipient.id,
+          "work_order_created",
+          `New Work Order #${workOrder.workOrderNumber} created by ${req.user?.fullName}`,
+          { workOrderId: workOrder.id },
+          req.user?.id || '',
+          "info"
+        );
       }
 
       res.status(201).json(workOrder);
@@ -3660,7 +3502,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         for (const employeeId of teamMembers) {
           if (!existingEmployeeIds.has(employeeId)) {
-            const employee = employeeMap.get(employeeId);
+            const employee: Employee | undefined = employeeMap.get(employeeId);
             if (employee) {
               const hourlyRate = employee.hourlyRate || "0";
               const hourlyRateNum = Number(hourlyRate) || 0;
@@ -3818,6 +3660,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const inspection = await storage.createInspection(validatedData);
+
+      // Notify Supervisor/Manager
+      const supervisors = await storage.getEmployeesByRole("supervisor");
+      const managers = await storage.getEmployeesByRole("manager");
+      const recipients = [...supervisors, ...managers];
+
+      for (const recipient of recipients) {
+        await createInAppNotification(
+          recipient.id,
+          "inspection_created",
+          `New Inspection created for ${'equipmentId' in validatedData ? 'Equipment' : 'Vehicle'} by ${req.user?.fullName}`,
+          { inspectionId: inspection.id },
+          req.user?.id || '',
+          "info"
+        );
+      }
+
       res.status(201).json(inspection);
     } catch (error) {
       console.error("Error creating inspection:", error);
@@ -4287,6 +4146,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertPartsRequestSchema.parse(req.body);
       const request = await storage.createPartsRequest(validatedData);
+
+      // Notify Store Manager and Foreman
+      const storeManagers = await storage.getEmployeesByRole("store_manager");
+      const foremen = await storage.getEmployeesByRole("foreman");
+      const recipients = [...storeManagers, ...foremen];
+
+      for (const recipient of recipients) {
+        await createInAppNotification(
+          recipient.id,
+          "parts_request_created",
+          `New Parts Request #${request.id.substring(0, 8)} created by ${req.user?.fullName}`,
+          { requestId: request.id },
+          req.user?.id || '',
+          "info"
+        );
+      }
+
       res.status(201).json(request);
     } catch (error) {
       console.error("Error creating parts request:", error);
@@ -4298,6 +4174,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertPartsRequestSchema.parse(req.body);
       const request = await storage.updatePartsRequest(req.params.id, validatedData);
+
+      // Notify Requestor if status changed to approved or rejected
+      if (request.requestedById && (validatedData.status === 'approved' || validatedData.status === 'rejected')) {
+        await createInAppNotification(
+          request.requestedById,
+          `parts_request_${validatedData.status}`,
+          `Parts Request #${request.id.substring(0, 8)} ${validatedData.status} by ${req.user?.fullName}`,
+          { requestId: request.id },
+          req.user?.id || '',
+          validatedData.status === 'approved' ? "success" : "error"
+        );
+      }
+
       res.json(request);
     } catch (error) {
       console.error("Error updating parts request:", error);
@@ -8048,7 +7937,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
       // Calculate spare parts costs from parts receipts
       const { partsReceipts } = await import("@shared/schema");
-      const completedWorkOrderIds = completedOrders.map(o => o.id);
+      const completedWorkOrderIds = completedOrders.map((o: typeof completedOrders[number]) => o.id);
 
       if (completedWorkOrderIds.length > 0) {
         // Fetch all parts receipts for completed work orders
@@ -8062,7 +7951,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           .where(inArray(partsReceipts.workOrderId, completedWorkOrderIds));
 
         // Get unique spare part IDs
-        const sparePartIds = [...new Set(receipts.map(r => r.sparePartId).filter(Boolean))];
+        const sparePartIds = Array.from(new Set(receipts.map((r: typeof receipts[number]) => r.sparePartId).filter(Boolean))) as string[];
 
         if (sparePartIds.length > 0) {
           // Fetch spare parts prices
@@ -8076,7 +7965,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
           // Create a map of part ID to price
           const partPriceMap = new Map();
-          parts.forEach(p => {
+          parts.forEach((p: typeof parts[number]) => {
             if (p.price) {
               partPriceMap.set(p.id, parseFloat(p.price));
             }

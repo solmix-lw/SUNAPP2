@@ -1,14 +1,15 @@
-import { Switch, Route, useLocation } from "wouter";
-import { queryClient, apiRequest } from "./lib/queryClient";
+import { Route, Switch, useLocation } from "wouter";
 import { QueryClientProvider, useQuery, useMutation } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/AppSidebar";
-import { LanguageToggle } from "@/components/LanguageToggle";
-import { ThemeToggle } from "@/components/ThemeToggle";
-import { LanguageProvider } from "@/contexts/LanguageContext";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { LanguageProvider } from "@/contexts/LanguageContext";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/toaster";
+import { AppSidebar } from "@/components/AppSidebar";
+import { NotificationsPopover } from "@/components/NotificationsPopover";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { LanguageToggle } from "@/components/LanguageToggle";
 import DashboardPage from "@/pages/Dashboard";
 import EquipmentPage from "@/pages/Equipment";
 import EquipmentCategoryPage from "@/pages/EquipmentCategory";
@@ -96,7 +97,7 @@ function Router() {
 function AppContent() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
-  
+
   // Check authentication status
   const { data: authData, isLoading } = useQuery({
     queryKey: ["/api/auth/me"],
@@ -155,6 +156,7 @@ function AppContent() {
           <header className="flex items-center justify-between h-10 px-2 border-b bg-background">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <div className="flex items-center gap-1.5">
+              <NotificationsPopover />
               {(authData as any)?.user && (
                 <div className="flex items-center gap-1.5 text-[11px]">
                   <UserIcon className="h-3 w-3 text-muted-foreground" />

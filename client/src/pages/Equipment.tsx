@@ -111,14 +111,17 @@ export default function EquipmentPage() {
 
   const { data: equipment, isLoading } = useQuery<Equipment[]>({
     queryKey: ["/api/equipment"],
+    queryFn: () => apiRequest('GET', '/api/equipment').then(res => res.json()),
   });
 
   const { data: categories } = useQuery<EquipmentCategory[]>({
     queryKey: ["/api/equipment-categories"],
+    queryFn: () => apiRequest('GET', '/api/equipment-categories').then(res => res.json()),
   });
 
   const { data: employees } = useQuery<Employee[]>({
     queryKey: ["/api/employees"],
+    queryFn: () => apiRequest('GET', '/api/employees').then(res => res.json()),
   });
 
   const filteredEquipment = equipment?.filter((item) => {
