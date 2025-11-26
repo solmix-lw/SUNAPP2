@@ -96,6 +96,7 @@ import { D365ItemsReviewDialog } from "@/components/D365ItemsReviewDialog";
 import { D365EquipmentReviewDialog } from "@/components/D365EquipmentReviewDialog";
 import { EthiopianYearManagement } from "@/components/EthiopianYearManagement";
 import { SampleDataManagement } from "@/components/SampleDataManagement";
+import { AVAILABLE_PAGES } from "@/lib/available-pages";
 
 type DeviceSettings = {
   id: string;
@@ -330,15 +331,21 @@ export default function AdminSettings() {
 
   // Update local state when permissions are loaded
   useEffect(() => {
-    if (permissions && permissions.length > 0) {
+    if (selectedEmployeeId) {
+      // Initialize all pages to true (allowed by default)
       const permMap: {[key: string]: boolean} = {};
-      permissions.forEach((perm: any) => {
-        permMap[perm.pagePath] = perm.isAllowed;
+      AVAILABLE_PAGES.forEach(page => {
+        permMap[page.path] = true;
       });
+      
+      // Override with any explicit permissions from the server
+      if (permissions && permissions.length > 0) {
+        permissions.forEach((perm: any) => {
+          permMap[perm.pagePath] = perm.isAllowed;
+        });
+      }
+      
       setEmployeePermissions(permMap);
-    } else if (selectedEmployeeId) {
-      // If no permissions exist, default all to true (allowed)
-      setEmployeePermissions({});
     }
   }, [permissions, selectedEmployeeId]);
 
@@ -2673,48 +2680,59 @@ export default function AdminSettings() {
                     {selectedEmployeeId && (
                       <>
                         <div className="border rounded-lg p-4">
-                          <h3 className="font-semibold mb-3">Available Pages</h3>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {[
-                              { path: "/", name: "Dashboard" },
-                              { path: "/my-work", name: "My Work" },
-                              { path: "/equipment", name: "Equipment" },
-                              { path: "/parts", name: "Spare Parts" },
-                              { path: "/maintenance", name: "Maintenance History" },
-                              { path: "/models", name: "3D Models" },
-                              { path: "/upload", name: "Upload Model" },
-                              { path: "/items", name: "Items" },
-                              { path: "/garages", name: "Garages" },
-                              { path: "/equipment-reception", name: "Equipment Reception" },
-                              { path: "/equipment-maintenances", name: "Equipment Maintenances" },
-                              { path: "/inspection", name: "Inspection" },
-                              { path: "/employees", name: "Employees" },
-                              { path: "/approvals", name: "Approvals" },
-                              { path: "/work-orders", name: "Work Orders" },
-                              { path: "/parts-locations", name: "Parts Locations" },
-                              { path: "/store-manager", name: "Store Manager" },
-                              { path: "/foreman", name: "Foreman Dashboard" },
-                              { path: "/verifier", name: "Verifier Dashboard" },
-                              { path: "/team-performance", name: "Team Performance" },
-                              { path: "/admin-settings", name: "Admin Settings" },
-                            ].map((page) => (
-                              <div key={page.path} className="flex items-center space-x-2">
-                                <Checkbox 
-                                  id={page.path} 
-                                  checked={employeePermissions[page.path] !== false}
-                                  onCheckedChange={(checked) => {
-                                    setEmployeePermissions(prev => ({
-                                      ...prev,
-                                      [page.path]: checked === true,
-                                    }));
-                                  }}
-                                  data-testid={`checkbox-${page.path}`} 
-                                />
-                                <Label htmlFor={page.path} className="cursor-pointer">
-                                  {page.name}
-                                </Label>
+                          <h3 className="font-semibold mb-3">Available Pages ({AVAILABLE_PAGES.length} pages)</h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Uncheck pages to restrict access for this employee. Changes apply immediately after saving.
+                          </p>
+                          
+                          <div className="space-y-4">
+                            <div>
+                              <h4 className="text-sm font-medium text-muted-foreground mb-2">Main Navigation</h4>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {AVAILABLE_PAGES.filter(p => p.category === "main").map((page) => (
+                                  <div key={page.path} className="flex items-center space-x-2">
+                                    <Checkbox 
+                                      id={page.path} 
+                                      checked={employeePermissions[page.path] === true}
+                                      onCheckedChange={(checked) => {
+                                        setEmployeePermissions(prev => ({
+                                          ...prev,
+                                          [page.path]: checked === true,
+                                        }));
+                                      }}
+                                      data-testid={`checkbox-${page.path}`} 
+                                    />
+                                    <Label htmlFor={page.path} className="cursor-pointer">
+                                      {page.name}
+                                    </Label>
+                                  </div>
+                                ))}
                               </div>
-                            ))}
+                            </div>
+                            
+                            <div>
+                              <h4 className="text-sm font-medium text-muted-foreground mb-2">Garage Management</h4>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {AVAILABLE_PAGES.filter(p => p.category === "garage").map((page) => (
+                                  <div key={page.path} className="flex items-center space-x-2">
+                                    <Checkbox 
+                                      id={page.path} 
+                                      checked={employeePermissions[page.path] === true}
+                                      onCheckedChange={(checked) => {
+                                        setEmployeePermissions(prev => ({
+                                          ...prev,
+                                          [page.path]: checked === true,
+                                        }));
+                                      }}
+                                      data-testid={`checkbox-${page.path}`} 
+                                    />
+                                    <Label htmlFor={page.path} className="cursor-pointer">
+                                      {page.name}
+                                    </Label>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         </div>
                         

@@ -1,4 +1,4 @@
-import { Home, Wrench, Box, Upload, ClipboardList, Building2, Users, FileText, BookOpen, MapPin, CheckCircle, Truck, Settings, ClipboardCheck, Search, Package, BarChart3, Store, Trophy, UserCheck, ClipboardSignature, Briefcase, Navigation, Archive, DollarSign } from "lucide-react";
+import { Home, Wrench, Box, Upload, ClipboardList, Building2, Users, FileText, BookOpen, MapPin, CheckCircle, Truck, Settings, ClipboardCheck, Search, Package, BarChart3, Store, Trophy, UserCheck, ClipboardSignature, Briefcase, Navigation, Archive, DollarSign, LucideIcon } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -14,17 +14,23 @@ import {
 } from "@/components/ui/sidebar";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useQuery } from "@tanstack/react-query";
+import { getMainPages, getGaragePages, type AvailablePage } from "@/lib/available-pages";
+
+const iconMap: Record<string, LucideIcon> = {
+  Home, Wrench, Box, Upload, ClipboardList, Building2, Users, FileText, 
+  BookOpen, MapPin, CheckCircle, Truck, Settings, ClipboardCheck, Search, 
+  Package, BarChart3, Store, Trophy, UserCheck, ClipboardSignature, 
+  Briefcase, Navigation, Archive, DollarSign,
+};
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { t } = useLanguage();
 
-  // Fetch app customizations
   const { data: appCustomizations } = useQuery({
     queryKey: ["/api/app-customizations"],
   });
 
-  // Fetch user auth data including permissions
   const { data: authData } = useQuery({
     queryKey: ["/api/auth/me"],
   });
@@ -32,168 +38,30 @@ export function AppSidebar() {
   const user = (authData as any)?.user;
   const permissions = (authData as any)?.user?.pagePermissions || [];
 
-  // Helper function to check if user has access to a page
   const hasPageAccess = (pagePath: string): boolean => {
-    // CEO and Admin users always have access to all pages
     if (user?.role?.toLowerCase() === 'ceo' || user?.role?.toLowerCase() === 'admin') {
       return true;
     }
-
-    // Check if there's an explicit permission for this page
     const permission = permissions.find((p: any) => p.pagePath === pagePath);
-
-    // If no permission record exists, default to allowing access (backward compatibility)
     if (!permission) {
       return true;
     }
-
-    // Otherwise, use the isAllowed value
     return permission.isAllowed;
   };
 
-  const mainMenuItems = [
-    {
-      title: t("dashboard"),
-      url: "/",
-      icon: BarChart3,
-      testId: "link-dashboard",
-    },
-    {
-      title: "My Work",
-      url: "/my-work",
-      icon: Briefcase,
-      testId: "link-my-work",
-    },
-    {
-      title: t("equipment"),
-      url: "/equipment",
-      icon: Home,
-      testId: "link-equipment",
-    },
-    {
-      title: t("spareParts"),
-      url: "/parts",
-      icon: Wrench,
-      testId: "link-parts",
-    },
-    {
-      title: t("maintenanceHistory"),
-      url: "/maintenance",
-      icon: ClipboardList,
-      testId: "link-maintenance",
-    },
-    {
-      title: t("models3D"),
-      url: "/models",
-      icon: Box,
-      testId: "link-models",
-    },
-    {
-      title: t("uploadModel"),
-      url: "/upload",
-      icon: Upload,
-      testId: "link-upload",
-    },
-  ];
+  const getTitle = (page: AvailablePage): string => {
+    if (page.translationKey) {
+      return t(page.translationKey);
+    }
+    return page.name;
+  };
 
-  const garageMenuItems = [
-    {
-      title: t("garages"),
-      url: "/garages",
-      icon: Building2,
-      testId: "link-garages",
-    },
-    {
-      title: "Equipment Reception",
-      url: "/equipment-reception",
-      icon: Truck,
-      testId: "link-equipment-reception",
-    },
-    {
-      title: "Equipment Maintenances",
-      url: "/equipment-maintenances",
-      icon: ClipboardCheck,
-      testId: "link-equipment-maintenances",
-    },
-    {
-      title: "Inspection",
-      url: "/inspection",
-      icon: Search,
-      testId: "link-inspection",
-    },
-    {
-      title: t("employees"),
-      url: "/employees",
-      icon: Users,
-      testId: "link-employees",
-    },
-    {
-      title: t("approvals"),
-      url: "/approvals",
-      icon: CheckCircle,
-      testId: "link-approvals",
-    },
-    {
-      title: t("workOrders"),
-      url: "/work-orders",
-      icon: FileText,
-      testId: "link-work-orders",
-    },
-    {
-      title: "Archived Work Orders",
-      url: "/archived-work-orders",
-      icon: Archive,
-      testId: "link-archived-work-orders",
-    },
-    {
-      title: t("partsLocations"),
-      url: "/parts-locations",
-      icon: MapPin,
-      testId: "link-parts-locations",
-    },
-    {
-      title: "Store Manager",
-      url: "/store-manager",
-      icon: Store,
-      testId: "link-store-manager",
-    },
-    {
-      title: "Foreman Dashboard",
-      url: "/foreman",
-      icon: UserCheck,
-      testId: "link-foreman",
-    },
-    {
-      title: "Verifier Dashboard",
-      url: "/verifier",
-      icon: ClipboardSignature,
-      testId: "link-verifier",
-    },
-    {
-      title: "Team Performance",
-      url: "/team-performance",
-      icon: Trophy,
-      testId: "link-team-performance",
-    },
-    {
-      title: "Fleet Tracking",
-      url: "/fleet-tracking",
-      icon: Navigation,
-      testId: "link-fleet-tracking",
-    },
-    {
-      title: "Cost Reports",
-      url: "/cost-reports",
-      icon: DollarSign,
-      testId: "link-cost-reports",
-    },
-    {
-      title: t("adminSettings"),
-      url: "/admin-settings",
-      icon: Settings,
-      testId: "link-admin-settings",
-    },
-  ];
+  const getIcon = (iconName: string): LucideIcon => {
+    return iconMap[iconName] || Box;
+  };
+
+  const mainMenuItems = getMainPages();
+  const garageMenuItems = getGaragePages();
 
   return (
     <Sidebar>
@@ -226,16 +94,19 @@ export function AppSidebar() {
           <SidebarGroupLabel>{t("navigation")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainMenuItems.filter(item => hasPageAccess(item.url)).map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={item.testId}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {mainMenuItems.filter(item => hasPageAccess(item.path)).map((item) => {
+                const Icon = getIcon(item.iconName);
+                return (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton asChild isActive={location === item.path}>
+                      <Link href={item.path} data-testid={item.testId}>
+                        <Icon className="h-4 w-4" />
+                        <span>{getTitle(item)}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -244,16 +115,19 @@ export function AppSidebar() {
           <SidebarGroupLabel>{t("garageManagement")}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {garageMenuItems.filter(item => hasPageAccess(item.url)).map((item) => (
-                <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={item.testId}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {garageMenuItems.filter(item => hasPageAccess(item.path)).map((item) => {
+                const Icon = getIcon(item.iconName);
+                return (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton asChild isActive={location === item.path}>
+                      <Link href={item.path} data-testid={item.testId}>
+                        <Icon className="h-4 w-4" />
+                        <span>{getTitle(item)}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
