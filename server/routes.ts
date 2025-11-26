@@ -686,8 +686,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid parts data" });
       }
 
+
       const results = {
-        success: 0,
+        created: 0,
+        updated: 0,
+        skipped: 0,
         failed: 0,
         errors: [] as string[]
       };
@@ -700,11 +703,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (existingPart) {
             // Update existing part
             await storage.updatePart(existingPart.id, partData);
+            results.updated++;
           } else {
             // Create new part
             await storage.createPart(partData);
+            results.created++;
           }
-          results.success++;
         } catch (error) {
           console.error(`Error importing part ${partData.partNumber}:`, error);
           results.failed++;
@@ -712,7 +716,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      res.json(results);
+      res.json({ results });
     } catch (error) {
       console.error("Error importing parts:", error);
       res.status(500).json({ error: "Failed to import parts" });
