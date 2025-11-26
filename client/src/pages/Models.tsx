@@ -20,12 +20,12 @@ export default function ModelsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPart, setSelectedPart] = useState<SparePartWithCompatibility | null>(null);
 
-  const { data: parts, isLoading } = useQuery<SparePartWithCompatibility[]>({
+  const { data: parts = [], isLoading } = useQuery<SparePartWithCompatibility[]>({
     queryKey: ["/api/parts"],
   });
 
   // Filter only parts that have 3D models
-  const partsWithModels = parts?.filter((part) => part.model3dPath);
+  const partsWithModels = (parts ?? []).filter((part) => part.model3dPath);
 
   const filteredParts = partsWithModels?.filter((part) => {
     const matchesSearch =

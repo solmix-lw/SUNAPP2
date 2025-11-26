@@ -2,10 +2,9 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { eq, or, ilike, sql, desc, and, inArray, gte, lte } from "drizzle-orm";
+import { eq, or, ilike, sql, desc, and } from "drizzle-orm";
 import { z } from "zod";
 import {
-
   insertEquipmentCategorySchema,
   insertEquipmentSchema,
   insertSparePartSchema,
@@ -40,40 +39,29 @@ import {
   workOrderGarages,
   workOrderWorkshops,
   workshops,
-  garages,
   workOrders,
   itemRequisitions,
   itemRequisitionLines,
+  type ItemRequisitionLine,
   spareParts,
   employees,
   partsReceipts,
-  workOrderMemberships,
-  workOrderTimeTracking,
-  notifications,
-  insertNotificationSchema,
+  type InsertEquipment,
 } from "@shared/schema";
-import type { Employee, InsertEmployee } from "@shared/schema";
 import multer from "multer";
+import * as XLSX from "xlsx";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { nanoid } from "nanoid";
 import { spawn } from "child_process";
-import { isCEO, isCEOOrAdmin, isAuthenticated, canApprove, verifyCredentials, generateToken, hasRole, requireRole, isSupervisorOrCEO, authenticateToken } from "./auth";
+import { isCEO, isCEOOrAdmin, isAuthenticated, canApprove, verifyCredentials, generateToken, hasRole } from "./auth";
 import { sendCEONotification, createNotification } from "./email-service";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
 import express from "express";
 import bcrypt from "bcrypt";
 import { calculateWorkOrderElapsedTime } from "./work-timer-utils";
 import { parseEquipmentDescription } from "./parse-equipment-description";
-import { getFiscalQuarterRange } from "../shared/fiscal";
-import {
-  generateExcelTemplate,
-  parseExcelFile,
-  validateAndTransformExcelData,
-  employeeTemplateConfig,
-  sparePartsTemplateConfig,
-  equipmentTemplateConfig,
-} from "./excel-utils";
+import { generateExcelTemplate, sparePartsTemplateConfig } from "./excel-utils";
 
 // Configure multer for memory storage
 const upload = multer({
@@ -103,33 +91,6 @@ const uploadVideo = multer({
   }
 });
 
-// Helper function to create in-app notifications
-async function createInAppNotification(
-  recipientId: string,
-  activityType: string,
-  message: string,
-  data: Record<string, any> = {},
-  actorId: string | null = null,
-  type: "info" | "success" | "warning" | "error" = "info"
-) {
-  try {
-    // Don't notify yourself
-    if (actorId && recipientId === actorId) return;
-
-    await db.insert(notifications).values({
-      recipientId,
-      actorId,
-      type,
-      activityType,
-      message,
-      data,
-      read: false,
-    });
-  } catch (error) {
-    console.error("Error creating in-app notification:", error);
-  }
-}
-
 // Configure multer for 3D model files
 const upload3DModel = multer({
   storage: multer.memoryStorage(),
@@ -149,28 +110,6 @@ const upload3DModel = multer({
       cb(null, true);
     } else {
       cb(new Error('Only 3D model files (GLB, GLTF, OBJ) are allowed'));
-    }
-  }
-});
-
-// Configure multer for Excel file uploads (import)
-const uploadExcel = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit for Excel files
-  fileFilter: (_req, file, cb) => {
-    // Accept Excel files only
-    const allowedMimeTypes = [
-      'application/vnd.ms-excel', // XLS
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // XLSX
-      'text/csv', // CSV
-    ];
-    const allowedExtensions = ['.xls', '.xlsx', '.csv'];
-    const fileExtension = file.originalname.toLowerCase().substring(file.originalname.lastIndexOf('.'));
-
-    if (allowedMimeTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only Excel files (XLS, XLSX, CSV) are allowed'));
     }
   }
 });
@@ -242,24 +181,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ message: "Logged out successfully" });
   });
 
-  app.get("/api/auth/me", async (req, res) => {
+  app.get("/api/auth/me", (req, res) => {
     if (req.user) {
       const { password, ...userWithoutPassword } = req.user as any;
-
-      // Fetch user's page permissions
-      try {
-        const permissions = await storage.getEmployeePagePermissions(req.user.id);
-        res.json({
-          user: {
-            ...userWithoutPassword,
-            pagePermissions: permissions
-          }
-        });
-      } catch (error) {
-        console.error("Error fetching user permissions:", error);
-        // Return user without permissions if fetch fails
-        res.json({ user: userWithoutPassword });
-      }
+      res.json({ user: userWithoutPassword });
     } else {
       res.json({ user: null });
     }
@@ -324,17 +249,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertEquipmentCategorySchema.parse(req.body);
       const category = await storage.createEquipmentCategory(validatedData);
+
+      // Send email notification if user is admin
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'created',
+          'equipment_category',
+          category.id,
+          req.user.username || 'unknown',
+          validatedData
+        ));
+      }
+
       res.status(201).json(category);
     } catch (error) {
       console.error("Error creating equipment category:", error);
-      res.status(400).json({ error: "Invalid equipment category data" });
+      res.status(500).json({ error: "Failed to create equipment category" });
     }
   });
 
-  // Equipment endpoints
+  // Protected: Only CEO/Admin can update categories
+  app.put("/api/equipment-categories/:id", isCEOOrAdmin, async (req, res) => {
+    try {
+      const validatedData = insertEquipmentCategorySchema.partial().parse(req.body);
+      const category = await storage.updateEquipmentCategory(req.params.id, validatedData);
+
+      if (!category) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+
+      // Send email notification if user is admin
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'updated',
+          'equipment_category',
+          category.id,
+          req.user.username || 'unknown',
+          validatedData
+        ));
+      }
+
+      res.json(category);
+    } catch (error) {
+      console.error("Error updating equipment category:", error);
+      res.status(500).json({ error: "Failed to update equipment category" });
+    }
+  });
+
+  // Protected: Only CEO/Admin can delete categories
+  app.delete("/api/equipment-categories/:id", isCEOOrAdmin, async (req, res) => {
+    try {
+      const deleted = await storage.deleteEquipmentCategory(req.params.id);
+
+      if (!deleted) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+
+      // Send email notification if user is admin
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'deleted',
+          'equipment_category',
+          req.params.id,
+          req.user.username || 'unknown',
+          { id: req.params.id }
+        ));
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting equipment category:", error);
+      res.status(500).json({ error: "Failed to delete equipment category" });
+    }
+  });
+
+  // Protected: Only CEO/Admin can delete all categories
+  app.delete("/api/equipment-categories", isCEOOrAdmin, async (req, res) => {
+    try {
+      const deletedCount = await storage.deleteAllEquipmentCategories();
+
+      // Send email notification if user is admin
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'deleted',
+          'equipment_category',
+          'all',
+          req.user.username || 'unknown',
+          { deletedCount }
+        ));
+      }
+
+      res.json({ success: true, deletedCount });
+    } catch (error) {
+      console.error("Error deleting all equipment categories:", error);
+      res.status(500).json({ error: "Failed to delete all equipment categories" });
+    }
+  });
+
+  // Equipment endpoints with server-side search
   app.get("/api/equipment", async (req, res) => {
     try {
-      const equipment = await storage.getAllEquipment();
+      const searchTerm = req.query.search as string | undefined;
+      const equipmentType = req.query.equipmentType as string | undefined;
+      const make = req.query.make as string | undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+
+      const result = await storage.searchEquipment({
+        searchTerm,
+        equipmentType: equipmentType !== "all" ? equipmentType : undefined,
+        make: make !== "all" ? make : undefined,
+        limit,
+        offset,
+      });
 
       // Prevent caching to ensure fresh data
       res.set({
@@ -343,10 +370,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'Expires': '0'
       });
 
-      res.json(equipment);
+      res.json(result.items);
     } catch (error) {
       console.error("Error fetching equipment:", error);
       res.status(500).json({ error: "Failed to fetch equipment" });
+    }
+  });
+
+  // Protected: Download equipment import template
+  app.get("/api/equipment/template", isAuthenticated, (req, res) => {
+    try {
+      const template = [
+        {
+          "Equipment Type*": "DOZER",
+          "Make*": "CAT",
+          "Model*": "D8R",
+          "Plate No": "AA-12345",
+          "Asset No": "SSC-001",
+          "New Asset No": "SSC-NEW-001",
+          "Machine Serial": "CAT12345X",
+          "ENGINE NUMBER": "41Z21282",
+          "Project Area": "Gelan",
+          "PRICE": "250000",
+          "Remarks": "Sample equipment entry"
+        }
+      ];
+
+      const worksheet = XLSX.utils.json_to_sheet(template);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Equipment Template");
+      const buffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename=equipment_template.xlsx');
+      res.send(buffer);
+    } catch (error) {
+      console.error("Error generating equipment template:", error);
+      res.status(500).json({ error: "Failed to generate template" });
+    }
+  });
+
+  // Protected: Only CEO/Admin can import equipment from Excel
+  app.post("/api/equipment/import", isCEOOrAdmin, async (req, res) => {
+    try {
+      const { equipment: equipmentList } = req.body;
+
+      if (!Array.isArray(equipmentList) || equipmentList.length === 0) {
+        return res.status(400).json({ error: "Invalid equipment list" });
+      }
+
+      // Validate all equipment data
+      const validatedEquipment: InsertEquipment[] = [];
+      const errors: string[] = [];
+
+      (equipmentList as any[]).forEach((item, index) => {
+        // Ensure numeric fields are correctly parsed if they come as strings
+        if (item.price && typeof item.price === 'string') {
+          item.price = parseFloat(item.price);
+        }
+
+        // Ensure string fields are correctly parsed if they come as numbers (common in Excel)
+        const stringFields = ['machineSerial', 'engineNumber', 'assetNo', 'plateNo', 'make', 'model', 'equipmentType', 'projectArea', 'remarks'];
+        stringFields.forEach(field => {
+          if (item[field] !== undefined && item[field] !== null && typeof item[field] !== 'string') {
+            item[field] = String(item[field]);
+          }
+        });
+
+        const result = insertEquipmentSchema.safeParse(item);
+        if (!result.success) {
+          errors.push(`Row ${index + 1}: ${result.error.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(", ")}`);
+        } else {
+          validatedEquipment.push(result.data);
+        }
+      });
+
+      if (errors.length > 0) {
+        console.error("Import validation errors:", errors);
+        return res.status(400).json({ error: "Validation failed", details: errors });
+      }
+
+      // Create all equipment
+      const created = await Promise.all(
+        validatedEquipment.map(data => storage.createEquipment(data))
+      );
+
+      // Send email notification if user is admin
+      if (req.user?.role === "admin") {
+        await sendCEONotification(createNotification(
+          'created',
+          'equipment',
+          'bulk',
+          req.user.username || 'unknown',
+          { action: 'bulk import', count: created.length }
+        ));
+      }
+
+      res.status(201).json({ success: true, count: created.length, equipment: created });
+    } catch (error) {
+      console.error("Error importing equipment:", error);
+      res.status(400).json({ error: "Invalid equipment data" });
     }
   });
 
@@ -363,12 +486,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Protected: Only CEO/Admin can create equipment
   app.post("/api/equipment", isCEOOrAdmin, async (req, res) => {
     try {
       const validatedData = insertEquipmentSchema.parse(req.body);
       const equipment = await storage.createEquipment(validatedData);
 
-      // Send email notification if user is admin
+      // Send email notification if user is admin (CEO gets notified about admin actions)
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'created',
@@ -386,10 +510,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Protected: Only CEO/Admin can update equipment
   app.put("/api/equipment/:id", isCEOOrAdmin, async (req, res) => {
     try {
-      const validatedData = insertEquipmentSchema.partial().parse(req.body);
+      const validatedData = insertEquipmentSchema.parse(req.body);
       const equipment = await storage.updateEquipment(req.params.id, validatedData);
+
       if (!equipment) {
         return res.status(404).json({ error: "Equipment not found" });
       }
@@ -412,35 +538,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Protected: Only CEO/Admin can delete equipment
   app.delete("/api/equipment/:id", isCEOOrAdmin, async (req, res) => {
     try {
-      const equipmentId = req.params.id;
-      const equipment = await storage.getEquipmentById(equipmentId);
+      const deleted = await storage.deleteEquipment(req.params.id);
 
-      if (!equipment) {
+      if (!deleted) {
         return res.status(404).json({ error: "Equipment not found" });
       }
-
-      await storage.deleteEquipment(equipmentId);
 
       // Send email notification if user is admin
       if (req.user?.role === "admin") {
         await sendCEONotification(createNotification(
           'deleted',
           'equipment',
-          equipmentId,
+          req.params.id,
           req.user.username || 'unknown',
-          { model: equipment.model, plateNo: equipment.plateNo }
+          { id: req.params.id }
         ));
       }
 
-      res.json({ success: true, message: "Equipment deleted successfully" });
+      res.json({ success: true });
     } catch (error) {
       console.error("Error deleting equipment:", error);
       res.status(500).json({ error: "Failed to delete equipment" });
     }
   });
 
+  // Protected: Only CEO/Admin can delete all equipment
   app.post("/api/equipment/delete-all", isCEOOrAdmin, async (req, res) => {
     try {
       const deletedCount = await storage.deleteAllEquipment();
@@ -492,235 +617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Protected: Only CEO/Admin can import equipment from Excel
-  app.post("/api/equipment/import", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { equipment: equipmentList } = req.body;
 
-      if (!Array.isArray(equipmentList) || equipmentList.length === 0) {
-        return res.status(400).json({ error: "Invalid equipment list" });
-      }
-
-      // Validate all equipment data
-      const validatedEquipment = equipmentList.map(item => {
-        // Ensure fields that should be strings are converted if they are numbers
-        if (typeof item.machineSerial === 'number') {
-          item.machineSerial = String(item.machineSerial);
-        }
-        if (typeof item.engineNumber === 'number') {
-          item.engineNumber = String(item.engineNumber);
-        }
-        return insertEquipmentSchema.parse(item);
-      });
-
-      // Create all equipment
-      const created = await Promise.all(
-        validatedEquipment.map(data => storage.createEquipment(data))
-      );
-
-      // Send email notification if user is admin
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'created',
-          'equipment',
-          'bulk',
-          req.user.username || 'unknown',
-          { action: 'bulk import', count: created.length }
-        ));
-      }
-
-      res.status(201).json({ success: true, count: created.length, equipment: created });
-    } catch (error) {
-      console.error("Error importing equipment:", error);
-      res.status(400).json({ error: "Invalid equipment data" });
-    }
-  });
-
-  // Download equipment Excel template
-  app.get("/api/equipment/template", isAuthenticated, async (req, res) => {
-    try {
-      const buffer = generateExcelTemplate(equipmentTemplateConfig);
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=equipment_template.xlsx');
-      res.send(buffer);
-    } catch (error) {
-      console.error("Error generating equipment template:", error);
-      res.status(500).json({ error: "Failed to generate template" });
-    }
-  });
-
-
-  // Import spare parts from Excel (or JSON preview)
-  // Import spare parts from Excel (or JSON preview)
-  app.post("/api/parts/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
-    try {
-      let partsToImport: any[] = [];
-
-      if (req.body.parts) {
-        // Handle JSON payload from preview dialog
-        partsToImport = req.body.parts;
-      } else if (req.file) {
-        // Handle direct file upload (legacy/fallback)
-        const rawData = parseExcelFile(req.file.buffer);
-        const result = validateAndTransformExcelData(
-          rawData,
-          sparePartsTemplateConfig,
-          insertSparePartSchema.partial(),
-          (row) => {
-            const hasPriceValue =
-              row.price !== undefined && row.price !== null && row.price !== "";
-            const numericPrice = hasPriceValue ? Number(row.price) : null;
-
-            const hasStockValue =
-              row.stockQuantity !== undefined &&
-              row.stockQuantity !== null &&
-              row.stockQuantity !== "";
-            const numericStock = hasStockValue ? Math.floor(Number(row.stockQuantity)) : 0;
-
-            return {
-              ...row,
-              price: numericPrice,
-              stockQuantity: numericStock,
-            };
-          }
-        );
-
-        if (!result.success) {
-          return res.status(400).json({
-            error: "Validation failed",
-            errors: result.errors,
-            summary: result.summary,
-          });
-        }
-        partsToImport = result.data || [];
-      } else if (req.body.parts && Array.isArray(req.body.parts)) {
-        // Handle JSON body (from preview confirmation)
-        partsToImport = req.body.parts;
-      } else {
-        return res.status(400).json({ error: "No file uploaded or data provided" });
-      }
-
-      if (partsToImport.length === 0) {
-        return res.status(400).json({ error: "No valid data found to import" });
-      }
-
-      // Process import (transaction)
-      const importResults = await db.transaction(async (tx: any) => {
-        let created = 0;
-        let updated = 0;
-        let skipped = 0;
-        const errors: any[] = [];
-
-        // Optimization: Bulk fetch existing parts
-        // We'll fetch in chunks if the list is huge, but for ~2000 items, fetching IDs/PartNumbers is fine.
-        // However, to be safe with query parameters limits, we'll chunk the lookups.
-
-        const partNumbers = partsToImport.map((p: any) => p.partNumber).filter(Boolean);
-        const existingMap = new Map();
-
-        // Fetch existing parts in chunks of 500
-        for (let i = 0; i < partNumbers.length; i += 500) {
-          const chunk = partNumbers.slice(i, i + 500);
-          if (chunk.length > 0) {
-            const existingParts = await tx.query.spareParts.findMany({
-              where: inArray(spareParts.partNumber, chunk)
-            });
-
-            existingParts.forEach((p: any) => {
-              existingMap.set(p.partNumber, p);
-            });
-          }
-        }
-
-        const toInsert: any[] = [];
-        const toUpdate: any[] = [];
-
-        for (const part of partsToImport) {
-          if (existingMap.has(part.partNumber)) {
-            const existing = existingMap.get(part.partNumber);
-            toUpdate.push({ ...part, id: existing.id });
-          } else {
-            toInsert.push(part);
-          }
-        }
-
-        // Bulk Insert
-        if (toInsert.length > 0) {
-          try {
-            // Insert in chunks of 100
-            for (let i = 0; i < toInsert.length; i += 100) {
-              const chunk = toInsert.slice(i, i + 100);
-              await tx.insert(spareParts).values(chunk);
-              created += chunk.length;
-            }
-          } catch (error) {
-            console.error("Bulk insert error:", error);
-            // Fallback to individual inserts
-            for (const item of toInsert) {
-              try {
-                await tx.insert(spareParts).values(item);
-                created++;
-              } catch (e) {
-                skipped++;
-                errors.push({
-                  partNumber: item.partNumber,
-                  error: e instanceof Error ? e.message : 'Insert error',
-                });
-              }
-            }
-          }
-        }
-
-        // Parallel Updates
-        // We can't easily bulk update with different values in SQL without complex queries,
-        // so we'll use Promise.all with concurrency limit or just simple Promise.all for now (2000 is manageable in parallel for simple updates, but let's chunk it to be safe)
-
-        // Process updates in chunks of 50 to avoid overwhelming the DB connection pool
-        for (let i = 0; i < toUpdate.length; i += 50) {
-          const chunk = toUpdate.slice(i, i + 50);
-          await Promise.all(chunk.map(async (item: any) => {
-            try {
-              const { id, ...data } = item;
-              await tx.update(spareParts)
-                .set(data)
-                .where(eq(spareParts.id, id));
-              updated++;
-            } catch (error) {
-              skipped++;
-              errors.push({
-                partNumber: item.partNumber,
-                error: error instanceof Error ? error.message : 'Update error',
-              });
-            }
-          }));
-        }
-
-        return { created, updated, skipped, errors };
-      });
-
-      res.json({
-        success: true,
-        results: importResults
-      });
-
-    } catch (error) {
-      console.error("Error importing parts:", error);
-      res.status(500).json({ error: "Failed to import parts" });
-    }
-  });
-
-  // Excel Import/Export - Spare Parts
-  // Download spare parts Excel template
-  app.get("/api/parts/template", isAuthenticated, async (req, res) => {
-    try {
-      const buffer = generateExcelTemplate(sparePartsTemplateConfig);
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=spare_parts_template.xlsx');
-      res.send(buffer);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to generate template" });
-    }
-  });
 
   // Spare parts endpoints with server-side search
   app.get("/api/parts", async (req, res) => {
@@ -739,63 +636,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
         offset,
       });
 
-      res.json(result);
+      res.json({ items: result.items, total: result.total });
     } catch (error) {
       console.error("Error fetching parts:", error);
       res.status(500).json({ error: "Failed to fetch parts" });
     }
   });
 
-
-
-  // Get all unique part categories
-  app.get("/api/parts/categories", async (_req, res) => {
-    try {
-      const categories = await storage.getPartCategories();
-      res.json(categories);
-    } catch (error) {
-      console.error("Error fetching categories:", error);
-      res.status(500).json({ error: "Failed to fetch categories" });
-    }
-  });
-
-  // Statistics endpoint for spare parts counts
+  // Get spare parts statistics
   app.get("/api/parts/stats", async (req, res) => {
     try {
       const searchTerm = req.query.search as string | undefined;
       const category = req.query.category as string | undefined;
 
-      // Get total count (with search/category filters)
-      const totalResult = await storage.searchParts({
+      const result = await storage.searchParts({
         searchTerm,
         category: category !== "all" ? category : undefined,
-        limit: 0, // Just get the count
       });
 
-      // Get low stock count (with search/category filters)
-      const lowStockResult = await storage.searchParts({
-        searchTerm,
-        category: category !== "all" ? category : undefined,
-        stockStatus: "low_stock",
-        limit: 0,
-      });
+      // Calculate statistics from the results
+      const total = result.total;
+      const lowStock = result.items.filter(p => p.stockStatus === 'low_stock').length;
+      const outOfStock = result.items.filter(p => p.stockStatus === 'out_of_stock').length;
 
-      // Get out of stock count (with search/category filters)
-      const outOfStockResult = await storage.searchParts({
-        searchTerm,
-        category: category !== "all" ? category : undefined,
-        stockStatus: "out_of_stock",
-        limit: 0,
-      });
-
-      res.json({
-        total: totalResult.total,
-        lowStock: lowStockResult.total,
-        outOfStock: outOfStockResult.total,
-      });
+      res.json({ total, lowStock, outOfStock });
     } catch (error) {
       console.error("Error fetching parts stats:", error);
-      res.status(500).json({ error: "Failed to fetch parts statistics" });
+      res.status(500).json({ error: "Failed to fetch parts stats" });
+    }
+  });
+
+  // Get all unique part categories
+  app.get("/api/parts/categories", async (req, res) => {
+    try {
+      const categories = await storage.getPartCategories();
+      res.json(categories);
+    } catch (error) {
+      console.error("Error fetching part categories:", error);
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+
+  // Bulk import spare parts
+  app.post("/api/parts/import", isCEOOrAdmin, async (req, res) => {
+    try {
+      const { parts } = req.body;
+      if (!Array.isArray(parts)) {
+        return res.status(400).json({ error: "Invalid parts data" });
+      }
+
+      const results = {
+        success: 0,
+        failed: 0,
+        errors: [] as string[]
+      };
+
+      for (const partData of parts) {
+        try {
+          // Check if part exists by partNumber
+          const existingPart = await storage.getPartByPartNumber(partData.partNumber);
+
+          if (existingPart) {
+            // Update existing part
+            await storage.updatePart(existingPart.id, partData);
+          } else {
+            // Create new part
+            await storage.createPart(partData);
+          }
+          results.success++;
+        } catch (error) {
+          console.error(`Error importing part ${partData.partNumber}:`, error);
+          results.failed++;
+          results.errors.push(`Failed to import ${partData.partNumber}: ${(error as Error).message}`);
+        }
+      }
+
+      res.json(results);
+    } catch (error) {
+      console.error("Error importing parts:", error);
+      res.status(500).json({ error: "Failed to import parts" });
+    }
+  });
+
+  // Spare parts template download
+  app.get("/api/parts/template", isAuthenticated, async (req, res) => {
+    try {
+      const buffer = generateExcelTemplate(sparePartsTemplateConfig);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", "attachment; filename=spare_parts_template.xlsx");
+      res.send(buffer);
+    } catch (error) {
+      console.error("Error generating spare parts template:", error);
+      res.status(500).json({ error: "Failed to generate template" });
     }
   });
 
@@ -1395,27 +1328,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get single workshop by ID with members list
-  app.get("/api/workshops/:id", async (req, res) => {
-    try {
-      const workshop = await storage.getWorkshopById(req.params.id);
-      if (!workshop) {
-        return res.status(404).json({ error: "Workshop not found" });
-      }
-
-      // Get workshop members
-      const membersList = await storage.getWorkshopMembers(req.params.id);
-
-      res.json({
-        ...workshop,
-        membersList,
-      });
-    } catch (error) {
-      console.error("Error fetching workshop:", error);
-      res.status(500).json({ error: "Failed to fetch workshop" });
-    }
-  });
-
   app.get("/api/workshops/:workshopId/members", async (req, res) => {
     try {
       const members = await storage.getWorkshopMembers(req.params.workshopId);
@@ -1440,105 +1352,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Excel Import/Export - Employees
-  // Download employee Excel template
-  app.get("/api/employees/template", isAuthenticated, async (req, res) => {
-    try {
-      const buffer = generateExcelTemplate(employeeTemplateConfig);
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=employees_template.xlsx');
-      res.send(buffer);
-    } catch (error) {
-      console.error("Error generating employee template:", error);
-      res.status(500).json({ error: "Failed to generate template" });
-    }
-  });
-
-  // Import employees from Excel
-  app.post("/api/employees/import", isCEOOrAdmin, uploadExcel.single('file'), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      // Parse Excel file
-      const rawData = parseExcelFile(req.file.buffer);
-
-      // Validate and transform data
-      const result = validateAndTransformExcelData(
-        rawData,
-        employeeTemplateConfig,
-        insertEmployeeSchema.extend({
-          isActive: z.boolean().optional().default(true),
-        }).partial({ password: true, username: true }),
-        (row) => ({
-          ...row,
-          isActive: true,
-          // Convert price string to number if present
-          price: row.price ? parseFloat(row.price) : undefined,
-        })
-      );
-
-      if (!result.success || !result.data) {
-        return res.status(400).json({
-          error: "Validation failed",
-          errors: result.errors,
-          summary: result.summary,
-        });
-      }
-
-      // Bulk insert using transaction
-      const importResults = await db.transaction(async (tx: typeof db) => {
-        let created = 0;
-        let updated = 0;
-        let skipped = 0;
-        const errors: any[] = [];
-
-
-        const employeesData = result.data! as InsertEmployee[];
-
-        for (const employee of employeesData) {
-          try {
-            // Check if employee already exists
-            const existing = await tx.query.employees.findFirst({
-              where: eq(employees.employeeId, employee.employeeId),
-            });
-
-            if (existing) {
-              // Update existing employee
-              await tx.update(employees)
-                .set(employee as any)
-                .where(eq(employees.employeeId, employee.employeeId));
-              updated++;
-            } else {
-              // Insert new employee
-              await tx.insert(employees).values(employee as any);
-              created++;
-            }
-          } catch (error) {
-            skipped++;
-            errors.push({
-              employeeId: employee.employeeId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            });
-          }
-        }
-
-
-
-        return { created, updated, skipped, errors };
-      });
-
-      res.json({
-        success: true,
-        results: importResults
-      });
-    } catch (error) {
-      console.error("Error importing employees:", error);
-      res.status(500).json({ error: "Failed to import employees" });
-    }
-  });
-
+  // Employees
   app.get("/api/employees", async (req, res) => {
     try {
       const { role, garageId } = req.query;
@@ -1693,69 +1507,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get presigned upload URL for employee photo
   app.post("/api/employees/:id/photo/upload-url", isCEOOrAdmin, async (req, res) => {
     try {
-      // Try to use object storage if available (Replit environment)
-      try {
-        const objectStorageService = new ObjectStorageService();
-        const uploadURL = await objectStorageService.getPublicObjectUploadURL();
+      const objectStorageService = new ObjectStorageService();
+      const uploadURL = await objectStorageService.getPublicObjectUploadURL();
 
-        // Extract the object path from the upload URL (before query parameters)
-        const url = new URL(uploadURL);
-        const objectPath = objectStorageService.normalizePublicObjectPath(url.origin + url.pathname);
+      // Extract the object path from the upload URL (before query parameters)
+      const url = new URL(uploadURL);
+      const objectPath = objectStorageService.normalizePublicObjectPath(url.origin + url.pathname);
 
-        return res.json({ uploadURL, objectPath });
-      } catch (storageError: any) {
-        // Fall back to local upload for development environments
-        console.log("Object storage not available, using local file upload:", storageError.message);
-
-        // Generate unique filename
-        const fileId = nanoid();
-        const uploadPath = `/uploads/employees/${fileId}`;
-
-        // Return a local upload URL (handled by a different endpoint)
-        return res.json({
-          uploadURL: `/api/employees/${req.params.id}/photo/local-upload`,
-          objectPath: uploadPath,
-          useLocalUpload: true,
-          fileId
-        });
-      }
+      res.json({ uploadURL, objectPath });
     } catch (error) {
       console.error("Error generating photo upload URL:", error);
       res.status(500).json({ error: "Failed to generate upload URL" });
-    }
-  });
-
-  // Local file upload endpoint (for development without object storage)
-  app.put("/api/employees/:id/photo/local-upload", isCEOOrAdmin, upload.single('photo'), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No file uploaded" });
-      }
-
-      // Create directory if it doesn't exist
-      const uploadsDir = join(process.cwd(), 'public', 'uploads', 'employees');
-      await mkdir(uploadsDir, { recursive: true });
-
-      // Generate filename with proper extension
-      const fileExtension = req.file.originalname.split('.').pop() || 'jpg';
-      const filename = `${nanoid()}.${fileExtension}`;
-      const filepath = join(uploadsDir, filename);
-
-      // Save file to disk
-      await writeFile(filepath, req.file.buffer);
-
-      // Update employee with photo path
-      const photoPath = `/uploads/employees/${filename}`;
-      const employee = await storage.updateEmployeePhoto(req.params.id, photoPath);
-
-      if (!employee) {
-        return res.status(404).json({ error: "Employee not found" });
-      }
-
-      res.json(employee);
-    } catch (error) {
-      console.error("Error uploading employee photo locally:", error);
-      res.status(500).json({ error: "Failed to upload photo" });
     }
   });
 
@@ -1785,13 +1547,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Work Orders
   app.get("/api/work-orders", async (req, res) => {
     try {
-      const { status, assignedToId, garageId, workshopId, equipmentModel } = req.query;
+      const { status, assignedToId, garageId, workshopId } = req.query;
       const workOrders = await storage.getAllWorkOrders({
         status: status as string | undefined,
         assignedToId: assignedToId as string | undefined,
         garageId: garageId as string | undefined,
         workshopId: workshopId as string | undefined,
-        equipmentModel: equipmentModel as string | undefined,
       });
       res.json(workOrders);
     } catch (error) {
@@ -1859,23 +1620,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/work-orders/foreman/approved-completions", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // Admin can see all foreman data
-      const isAdmin = hasRole(req.user, 'admin');
-      const approvedCompletions = await storage.getForemanApprovedCompletions(req.user.id, isAdmin);
-      const enrichedWorkOrders = await enrichWorkOrdersWithTimeTracking(approvedCompletions);
-      res.json(enrichedWorkOrders);
-    } catch (error) {
-      console.error("Error fetching foreman approved completions:", error);
-      res.status(500).json({ error: "Failed to fetch approved completions" });
-    }
-  });
-
   // Verifier dashboard endpoint (MUST be before :id route)
   app.get("/api/work-orders/verifier/pending", async (req, res) => {
     try {
@@ -1893,44 +1637,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching verifier pending work orders:", error);
       res.status(500).json({ error: "Failed to fetch pending work orders" });
-    }
-  });
-
-  app.get("/api/work-orders/verifier/verified", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // Check for verifier, ceo roles (admin has automatic full access)
-      if (!hasRole(req.user, 'verifier', 'ceo')) {
-        return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
-      }
-
-      const verifiedWorkOrders = await storage.getVerifierVerifiedWorkOrders();
-      res.json(verifiedWorkOrders);
-    } catch (error) {
-      console.error("Error fetching verifier verified work orders:", error);
-      res.status(500).json({ error: "Failed to fetch verified work orders" });
-    }
-  });
-
-  app.get("/api/work-orders/verifier/rejected", async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // Check for verifier, ceo roles (admin has automatic full access)
-      if (!hasRole(req.user, 'verifier', 'ceo')) {
-        return res.status(403).json({ error: "Access denied: Verifier or CEO role required (admin has full access)" });
-      }
-
-      const rejectedWorkOrders = await storage.getVerifierRejectedWorkOrders();
-      res.json(rejectedWorkOrders);
-    } catch (error) {
-      console.error("Error fetching verifier rejected work orders:", error);
-      res.status(500).json({ error: "Failed to fetch rejected work orders" });
     }
   });
 
@@ -1982,391 +1688,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching work order:", error);
       res.status(500).json({ error: "Failed to fetch work order" });
-    }
-  });
-
-  // Get detailed work order information including memberships, requisitions, and time tracking
-  app.get("/api/work-orders/:id/details", async (req, res) => {
-    try {
-      const { workOrderMemberships, employees, itemRequisitions, itemRequisitionLines, spareParts, partsReceipts } = await import("@shared/schema");
-      const workOrderId = req.params.id;
-
-      // Get basic work order info with time tracking
-      const workOrder = await storage.getWorkOrderById(workOrderId);
-      if (!workOrder) {
-        return res.status(404).json({ error: "Work order not found" });
-      }
-
-      // Enrich with time tracking
-      const enriched = await enrichWorkOrdersWithTimeTracking([workOrder]);
-      const enrichedWorkOrder = enriched[0];
-
-      // Get memberships with employee details
-      const memberships = await db
-        .select({
-          id: workOrderMemberships.id,
-          role: workOrderMemberships.role,
-          assignedAt: workOrderMemberships.assignedAt,
-          employee: {
-            id: employees.id,
-            fullName: employees.fullName,
-            role: employees.role,
-          }
-        })
-        .from(workOrderMemberships)
-        .innerJoin(employees, eq(workOrderMemberships.employeeId, employees.id))
-        .where(
-          and(
-            eq(workOrderMemberships.workOrderId, workOrderId),
-            eq(workOrderMemberships.isActive, true)
-          )
-        );
-
-      // Get item requisitions with lines and spare part details
-      const requisitions = await db
-        .select({
-          id: itemRequisitions.id,
-          requisitionNumber: itemRequisitions.requisitionNumber,
-          status: itemRequisitions.status,
-        })
-        .from(itemRequisitions)
-        .where(eq(itemRequisitions.workOrderId, workOrderId));
-
-      // For each requisition, get its lines with spare part details
-      const requisitionsWithLines = await Promise.all(
-        requisitions.map(async (req: typeof requisitions[number]) => {
-          const lines = await db
-            .select({
-              id: itemRequisitionLines.id,
-              description: itemRequisitionLines.description,
-              unitOfMeasure: itemRequisitionLines.unitOfMeasure,
-              quantityRequested: itemRequisitionLines.quantityRequested,
-              quantityApproved: itemRequisitionLines.quantityApproved,
-              status: itemRequisitionLines.status,
-              sparePart: {
-                id: spareParts.id,
-                partName: spareParts.partName,
-                partNumber: spareParts.partNumber,
-              }
-            })
-            .from(itemRequisitionLines)
-            .leftJoin(spareParts, eq(itemRequisitionLines.sparePartId, spareParts.id))
-            .where(eq(itemRequisitionLines.requisitionId, req.id));
-
-          return {
-            ...req,
-            lines: lines.map((line: typeof lines[number]) => ({
-              ...line,
-              sparePart: line.sparePart.id ? line.sparePart : undefined
-            }))
-          };
-        })
-      );
-
-      // Get parts receipts for this work order with spare part details
-      const receiptsData = await db
-        .select({
-          id: partsReceipts.id,
-          workOrderId: partsReceipts.workOrderId,
-          quantityIssued: partsReceipts.quantityIssued,
-          issuedAt: partsReceipts.issuedAt,
-          notes: partsReceipts.notes,
-          sparePart: {
-            id: spareParts.id,
-            partName: spareParts.partName,
-            partNumber: spareParts.partNumber,
-          },
-          issuedBy: {
-            id: employees.id,
-            fullName: employees.fullName,
-          }
-        })
-        .from(partsReceipts)
-        .leftJoin(spareParts, eq(partsReceipts.sparePartId, spareParts.id))
-        .leftJoin(employees, eq(partsReceipts.issuedById, employees.id))
-        .where(eq(partsReceipts.workOrderId, workOrderId));
-
-      const receipts = receiptsData.map((r: any) => ({
-        id: r.id,
-        workOrderId: r.workOrderId,
-        quantityIssued: r.quantityIssued,
-        issuedAt: r.issuedAt,
-        notes: r.notes,
-        sparePart: r.sparePart.id ? r.sparePart : null,
-        issuedBy: r.issuedBy.id ? r.issuedBy : null,
-      }));
-
-      res.json({
-        id: enrichedWorkOrder.id,
-        workOrderNumber: enrichedWorkOrder.workOrderNumber,
-        status: enrichedWorkOrder.status,
-        equipmentModel: (enrichedWorkOrder as any).equipmentModel,
-        description: enrichedWorkOrder.description,
-        elapsedTime: (enrichedWorkOrder as any).elapsedTime,
-        elapsedHours: (enrichedWorkOrder as any).elapsedHours,
-        startedAt: enrichedWorkOrder.startedAt,
-        completedAt: enrichedWorkOrder.completedAt,
-        memberships,
-        itemRequisitions: requisitionsWithLines,
-        partsReceipts: receipts,
-      });
-    } catch (error) {
-      console.error("Error fetching work order details:", error);
-      res.status(500).json({ error: "Failed to fetch work order details" });
-    }
-  });
-
-  // Work Order Cost Tracking Routes
-
-  // Get all cost entries for a work order
-  app.get("/api/work-orders/:id/costs", isAuthenticated, async (req, res) => {
-    try {
-      const workOrderId = req.params.id;
-
-      const [laborEntries, lubricantEntries, outsourceEntries, workOrder] = await Promise.all([
-        storage.getWorkOrderLaborEntries(workOrderId),
-        storage.getWorkOrderLubricantEntries(workOrderId),
-        storage.getWorkOrderOutsourceEntries(workOrderId),
-        storage.getWorkOrderById(workOrderId)
-      ]);
-
-      if (!workOrder) {
-        return res.status(404).json({ error: "Work order not found" });
-      }
-
-      res.json({
-        laborEntries,
-        lubricantEntries,
-        outsourceEntries,
-        summary: {
-          plannedLaborCost: workOrder.plannedLaborCost,
-          actualLaborCost: workOrder.actualLaborCost,
-          plannedLubricantCost: workOrder.plannedLubricantCost,
-          actualLubricantCost: workOrder.actualLubricantCost,
-          plannedOutsourceCost: workOrder.plannedOutsourceCost,
-          actualOutsourceCost: workOrder.actualOutsourceCost,
-          totalPlannedCost: workOrder.totalPlannedCost,
-          totalActualCost: workOrder.totalActualCost,
-          costVariance: workOrder.costVariance,
-          costVariancePercent: workOrder.costVariancePercent,
-        }
-      });
-    } catch (error) {
-      console.error("Error fetching work order costs:", error);
-      res.status(500).json({ error: "Failed to fetch work order costs" });
-    }
-  });
-
-  // Labor entries
-  app.get("/api/work-orders/:id/labor", isAuthenticated, async (req, res) => {
-    try {
-      const entries = await storage.getWorkOrderLaborEntries(req.params.id);
-      res.json(entries);
-    } catch (error) {
-      console.error("Error fetching labor entries:", error);
-      res.status(500).json({ error: "Failed to fetch labor entries" });
-    }
-  });
-
-  // POST /api/work-orders/:id/labor - Supervisors, Admin, and CEO can add labor costs
-  app.post("/api/work-orders/:id/labor", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const { insertWorkOrderLaborEntrySchema } = await import("@shared/schema");
-      const validated = insertWorkOrderLaborEntrySchema.parse({
-        ...req.body,
-        workOrderId: req.params.id,
-        enteredById: req.user.id,
-      });
-
-      // Recalculate totalCost server-side to avoid trusting client calculation
-      const hoursWorked = typeof validated.hoursWorked === 'number'
-        ? validated.hoursWorked
-        : parseFloat(validated.hoursWorked as any);
-      const hourlyRate = typeof validated.hourlyRateSnapshot === 'number'
-        ? validated.hourlyRateSnapshot
-        : parseFloat(validated.hourlyRateSnapshot as any);
-      const overtimeFactor = typeof validated.overtimeFactor === 'number'
-        ? validated.overtimeFactor
-        : parseFloat(validated.overtimeFactor as any);
-
-      // Validate hoursWorked is positive (prevents 0-hour entries)
-      if (hoursWorked <= 0) {
-        return res.status(400).json({ error: "Hours worked must be greater than 0" });
-      }
-
-      const recalculatedTotalCost = hoursWorked * hourlyRate * overtimeFactor;
-
-      const entry = await storage.addLaborEntry({
-        ...validated,
-        totalCost: Number(recalculatedTotalCost.toFixed(2)),
-      });
-      res.json(entry);
-    } catch (error: any) {
-      console.error("Error adding labor entry:", error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ error: "Invalid labor entry data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to add labor entry" });
-    }
-  });
-
-  // PATCH /api/work-orders/:workOrderId/labor/:entryId - Supervisors, Admin, and CEO can update labor costs
-  app.patch("/api/work-orders/:workOrderId/labor/:entryId", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // Only allow updating overtimeFactor and description
-      // Storage layer will automatically recalculate totalCost when overtimeFactor changes
-      const updateData: any = {};
-      if (req.body.overtimeFactor !== undefined) updateData.overtimeFactor = req.body.overtimeFactor;
-      if (req.body.description !== undefined) updateData.description = req.body.description;
-
-      const entry = await storage.updateLaborEntry(req.params.entryId, updateData);
-      res.json(entry);
-    } catch (error: any) {
-      console.error("Error updating labor entry:", error);
-      res.status(500).json({ error: error.message || "Failed to update labor entry" });
-    }
-  });
-
-  // DELETE /api/work-orders/:workOrderId/labor/:entryId - Supervisors, Admin, and CEO can delete labor costs
-  app.delete("/api/work-orders/:workOrderId/labor/:entryId", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      await storage.deleteLaborEntry(req.params.entryId);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting labor entry:", error);
-      res.status(500).json({ error: "Failed to delete labor entry" });
-    }
-  });
-
-  // Lubricant entries
-  app.get("/api/work-orders/:id/lubricants", isAuthenticated, async (req, res) => {
-    try {
-      const entries = await storage.getWorkOrderLubricantEntries(req.params.id);
-      res.json(entries);
-    } catch (error) {
-      console.error("Error fetching lubricant entries:", error);
-      res.status(500).json({ error: "Failed to fetch lubricant entries" });
-    }
-  });
-
-  // POST /api/work-orders/:id/lubricants - Supervisors, Admin, CEO, and assigned team members can add lubricant costs
-  app.post("/api/work-orders/:id/lubricants", authenticateToken, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      // Check if user is supervisor/CEO/admin OR assigned to this work order
-      const isSupervisorOrAdmin = hasRole(req.user, 'supervisor', 'admin', 'ceo');
-
-      if (!isSupervisorOrAdmin) {
-        // Check if user is assigned to this work order as a team member or foreman
-        const { workOrderMemberships } = await import("@shared/schema");
-        const assignment = await db.query.workOrderMemberships.findFirst({
-          where: and(
-            eq(workOrderMemberships.workOrderId, req.params.id),
-            eq(workOrderMemberships.employeeId, req.user.id),
-            eq(workOrderMemberships.isActive, true)
-          ),
-        });
-        if (!assignment || !assignment.isActive) {
-          return res.status(403).json({ error: "You must be assigned to this work order to add lubricant entries" });
-        }
-      }
-
-      const { insertWorkOrderLubricantEntrySchema } = await import("@shared/schema");
-      const validated = insertWorkOrderLubricantEntrySchema.parse({
-        ...req.body,
-        workOrderId: req.params.id,
-        enteredById: req.user.id,
-      });
-
-      const entry = await storage.addLubricantEntry(validated);
-      res.json(entry);
-    } catch (error: any) {
-      console.error("Error adding lubricant entry:", error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ error: "Invalid lubricant entry data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to add lubricant entry" });
-    }
-  });
-
-  // DELETE /api/work-orders/:workOrderId/lubricants/:entryId - Supervisors, Admin, and CEO can delete lubricant costs
-  app.delete("/api/work-orders/:workOrderId/lubricants/:entryId", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      await storage.deleteLubricantEntry(req.params.entryId);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting lubricant entry:", error);
-      res.status(500).json({ error: "Failed to delete lubricant entry" });
-    }
-  });
-
-  // Outsource entries
-  app.get("/api/work-orders/:id/outsource", isAuthenticated, async (req, res) => {
-    try {
-      const entries = await storage.getWorkOrderOutsourceEntries(req.params.id);
-      res.json(entries);
-    } catch (error) {
-      console.error("Error fetching outsource entries:", error);
-      res.status(500).json({ error: "Failed to fetch outsource entries" });
-    }
-  });
-
-  // POST /api/work-orders/:id/outsource - Supervisors, Admin, and CEO can add outsource costs
-  app.post("/api/work-orders/:id/outsource", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const { insertWorkOrderOutsourceEntrySchema } = await import("@shared/schema");
-      const validated = insertWorkOrderOutsourceEntrySchema.parse({
-        ...req.body,
-        workOrderId: req.params.id,
-        enteredById: req.user.id,
-      });
-
-      const entry = await storage.addOutsourceEntry(validated);
-      res.json(entry);
-    } catch (error: any) {
-      console.error("Error adding outsource entry:", error);
-      if (error.name === 'ZodError') {
-        return res.status(400).json({ error: "Invalid outsource entry data", details: error.errors });
-      }
-      res.status(500).json({ error: "Failed to add outsource entry" });
-    }
-  });
-
-  // DELETE /api/work-orders/:workOrderId/outsource/:entryId - Supervisors, Admin, and CEO can delete outsource costs
-  app.delete("/api/work-orders/:workOrderId/outsource/:entryId", isSupervisorOrCEO, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      await storage.deleteOutsourceEntry(req.params.entryId);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting outsource entry:", error);
-      res.status(500).json({ error: "Failed to delete outsource entry" });
     }
   });
 
@@ -2819,16 +2140,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Check if all lines in the requisition have been processed
       const allLines = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.requisitionId, line.requisitionId));
-      const allProcessed = allLines.every(
-        (lineItem: typeof allLines[number]) =>
-          lineItem.foremanStatus === 'approved' ||
-          lineItem.foremanStatus === 'rejected' ||
-          lineItem.id === req.params.lineId
-      );
-      const hasApprovedLines = allLines.some(
-        (lineItem: typeof allLines[number]) =>
-          lineItem.foremanStatus === 'approved' || lineItem.id === req.params.lineId
-      );
+      const allProcessed = allLines.every((l: ItemRequisitionLine) => l.foremanStatus === 'approved' || l.foremanStatus === 'rejected' || l.id === req.params.lineId);
+      const hasApprovedLines = allLines.some((l: ItemRequisitionLine) => l.foremanStatus === 'approved' || l.id === req.params.lineId);
 
       // If all lines processed and at least one approved, update requisition status to pending_store
       if (allProcessed && hasApprovedLines) {
@@ -2888,15 +2201,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Check if all lines in the requisition have been processed
       const allLines = await db.select().from(itemRequisitionLines).where(eq(itemRequisitionLines.requisitionId, line.requisitionId));
-      const allProcessed = allLines.every(
-        (lineItem: typeof allLines[number]) =>
-          lineItem.foremanStatus === 'approved' ||
-          lineItem.foremanStatus === 'rejected' ||
-          lineItem.id === req.params.lineId
-      );
-      const hasApprovedLines = allLines.some(
-        (lineItem: typeof allLines[number]) => lineItem.foremanStatus === 'approved'
-      );
+      const allProcessed = allLines.every((l: ItemRequisitionLine) => l.foremanStatus === 'approved' || l.foremanStatus === 'rejected' || l.id === req.params.lineId);
+      const hasApprovedLines = allLines.some((l: ItemRequisitionLine) => l.foremanStatus === 'approved');
 
       // If all lines processed and at least one approved, update requisition status to pending_store
       if (allProcessed && hasApprovedLines) {
@@ -3129,176 +2435,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // GET /api/work-orders - Fetch work orders with filtering and cost data
-  app.get("/api/work-orders", isAuthenticated, async (req, res) => {
-    try {
-      const {
-        workshopId,
-        completedAfter,
-        completedBefore,
-        equipmentModel,
-        garage,
-        hasCostData
-      } = req.query;
-
-      // Base query
-      let query = db
-        .select({
-          id: workOrders.id,
-          workOrderNumber: workOrders.workOrderNumber,
-          description: workOrders.description,
-          status: workOrders.status,
-          completedAt: workOrders.completedAt,
-          actualLaborCost: workOrders.actualLaborCost,
-          actualLubricantCost: workOrders.actualLubricantCost,
-          actualOutsourceCost: workOrders.actualOutsourceCost,
-          totalActualCost: workOrders.totalActualCost,
-          equipmentModel: equipment.model,
-        })
-        .from(workOrders)
-        .leftJoin(equipment, eq(workOrders.equipmentId, equipment.id));
-
-      const conditions = [];
-
-      // Filter by completion date
-      if (completedAfter) {
-        conditions.push(gte(workOrders.completedAt, new Date(completedAfter as string)));
-      }
-      if (completedBefore) {
-        conditions.push(lte(workOrders.completedAt, new Date(completedBefore as string)));
-      }
-
-      // Filter by status (if hasCostData is requested, imply completed status)
-      if (hasCostData === 'true') {
-        conditions.push(eq(workOrders.status, 'completed'));
-      }
-
-      // Filter by equipment model
-      if (equipmentModel) {
-        conditions.push(eq(equipment.model, equipmentModel as string));
-      }
-
-      // Filter by workshop
-      if (workshopId && workshopId !== 'all') {
-        const workshopMatches = db
-          .select({ workOrderId: workOrderWorkshops.workOrderId })
-          .from(workOrderWorkshops)
-          .where(eq(workOrderWorkshops.workshopId, workshopId as string));
-        conditions.push(inArray(workOrders.id, workshopMatches));
-      }
-
-      // Filter by garage
-      if (garage) {
-        const garageMatches = db
-          .select({ workOrderId: workOrderGarages.workOrderId })
-          .from(workOrderGarages)
-          .leftJoin(garages, eq(workOrderGarages.garageId, garages.id))
-          .where(eq(garages.name, garage as string));
-        conditions.push(inArray(workOrders.id, garageMatches));
-      }
-
-      if (conditions.length > 0) {
-        query = query.where(and(...conditions));
-      }
-
-      const results = await query.orderBy(desc(workOrders.completedAt));
-
-      // Calculate spare parts costs for each work order
-      // This is needed because spare parts costs are not stored on the work order directly
-      if (results.length > 0) {
-        const workOrderIds = results.map((r: typeof results[number]) => r.id);
-
-        // Fetch parts receipts
-        const receipts = await db
-          .select({
-            workOrderId: partsReceipts.workOrderId,
-            sparePartId: partsReceipts.sparePartId,
-            quantityIssued: partsReceipts.quantityIssued,
-          })
-          .from(partsReceipts)
-          .where(inArray(partsReceipts.workOrderId, workOrderIds));
-
-        // Get unique part IDs to fetch prices
-        // Get unique part IDs to fetch prices
-        const partIds = Array.from(new Set(receipts.map((r: typeof receipts[number]) => r.sparePartId).filter(Boolean))) as string[];
-        const partPrices = new Map();
-
-        if (partIds.length > 0) {
-          const parts = await db
-            .select({
-              id: spareParts.id,
-              price: spareParts.price,
-              name: spareParts.partName,
-              partNumber: spareParts.partNumber
-            })
-            .from(spareParts)
-            .where(inArray(spareParts.id, partIds));
-
-          parts.forEach((p: typeof parts[number]) => {
-            if (p.price) {
-              partPrices.set(p.id, {
-                price: parseFloat(p.price),
-                name: p.name,
-                partNumber: p.partNumber
-              });
-            }
-          });
-        }
-
-        // Calculate costs per work order and build parts list
-        const sparePartsCosts = new Map();
-        const partsUsedMap = new Map();
-
-        receipts.forEach((r: typeof receipts[number]) => {
-          if (r.workOrderId && r.sparePartId) {
-            const partInfo = partPrices.get(r.sparePartId);
-            const price = partInfo?.price || 0;
-            const cost = price * (r.quantityIssued || 0);
-
-            // Update total cost
-            const current = sparePartsCosts.get(r.workOrderId) || 0;
-            sparePartsCosts.set(r.workOrderId, current + cost);
-
-            // Add to parts list
-            if (!partsUsedMap.has(r.workOrderId)) {
-              partsUsedMap.set(r.workOrderId, []);
-            }
-            partsUsedMap.get(r.workOrderId).push({
-              name: partInfo?.name || 'Unknown Part',
-              partNumber: partInfo?.partNumber || 'N/A',
-              quantity: r.quantityIssued || 0,
-              unitCost: price,
-              totalCost: cost
-            });
-          }
-        });
-
-        // Merge costs and parts list into results
-        const enrichedResults = results.map((order: typeof results[number]) => {
-          const sparePartCost = sparePartsCosts.get(order.id) || 0;
-          const currentTotal = parseFloat(order.totalActualCost || '0');
-          const partsUsed = partsUsedMap.get(order.id) || [];
-
-          // If totalActualCost doesn't include spare parts (which it doesn't in current schema),
-          // we should add it for the display
-          return {
-            ...order,
-            actualSparePartsCost: sparePartCost.toString(),
-            totalActualCost: (currentTotal + sparePartCost).toString(),
-            partsUsed // Attach itemized parts list
-          };
-        });
-
-        return res.json(enrichedResults);
-      }
-
-      res.json(results);
-    } catch (error) {
-      console.error("Error fetching work orders:", error);
-      res.status(500).json({ error: "Failed to fetch work orders" });
-    }
-  });
-
   app.post("/api/work-orders", isCEOOrAdmin, async (req, res) => {
     try {
       // Extract requiredParts, garageIds, and workshopIds from body
@@ -3355,22 +2491,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         await sendCEONotification(createNotification(
           'created', 'work_order', workOrder.id, req.user.username || 'unknown', validatedData
         ));
-      }
-
-      // Notify CEO/Admin via in-app notification
-      const admins = await storage.getEmployeesByRole("admin");
-      const ceo = await storage.getEmployeesByRole("ceo");
-      const recipients = [...admins, ...ceo];
-
-      for (const recipient of recipients) {
-        await createInAppNotification(
-          recipient.id,
-          "work_order_created",
-          `New Work Order #${workOrder.workOrderNumber} created by ${req.user?.fullName}`,
-          { workOrderId: workOrder.id },
-          req.user?.id || '',
-          "info"
-        );
       }
 
       res.status(201).json(workOrder);
@@ -3485,42 +2605,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           quantity: part.quantity || 1,
         }));
         await storage.replaceWorkOrderRequiredParts(req.params.id, partsToInsert);
-      }
-
-      // Auto-create labor entries for newly assigned team members with minimum 1 minute
-      const { teamMembers } = workOrderData;
-      if (Array.isArray(teamMembers) && teamMembers.length > 0) {
-        const existingLaborEntries = await storage.getWorkOrderLaborEntries(req.params.id);
-        const existingEmployeeIds = new Set(
-          existingLaborEntries.map(entry => entry.employeeId)
-        );
-
-        const employeePromises = teamMembers.map(id => storage.getEmployeeById(id));
-        const employeeResults = await Promise.all(employeePromises);
-        const employees = employeeResults.filter((emp): emp is Employee => emp !== undefined);
-        const employeeMap = new Map(employees.map(emp => [emp.id, emp]));
-
-        for (const employeeId of teamMembers) {
-          if (!existingEmployeeIds.has(employeeId)) {
-            const employee: Employee | undefined = employeeMap.get(employeeId);
-            if (employee) {
-              const hourlyRate = employee.hourlyRate || "0";
-              const hourlyRateNum = Number(hourlyRate) || 0;
-              const minHours = 1 / 60; // 1 minute minimum
-              await storage.addLaborEntry({
-                workOrderId: req.params.id,
-                employeeId,
-                hoursWorked: minHours,
-                hourlyRateSnapshot: hourlyRateNum,
-                overtimeFactor: 1,
-                totalCost: Number((minHours * hourlyRateNum).toFixed(2)),
-                workDate: new Date(),
-                timeSource: "auto", // Mark for automatic updates
-              });
-              existingEmployeeIds.add(employeeId);
-            }
-          }
-        }
       }
 
       res.json(workOrder);
@@ -3660,23 +2744,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const inspection = await storage.createInspection(validatedData);
-
-      // Notify Supervisor/Manager
-      const supervisors = await storage.getEmployeesByRole("supervisor");
-      const managers = await storage.getEmployeesByRole("manager");
-      const recipients = [...supervisors, ...managers];
-
-      for (const recipient of recipients) {
-        await createInAppNotification(
-          recipient.id,
-          "inspection_created",
-          `New Inspection created for ${'equipmentId' in validatedData ? 'Equipment' : 'Vehicle'} by ${req.user?.fullName}`,
-          { inspectionId: inspection.id },
-          req.user?.id || '',
-          "info"
-        );
-      }
-
       res.status(201).json(inspection);
     } catch (error) {
       console.error("Error creating inspection:", error);
@@ -4146,23 +3213,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertPartsRequestSchema.parse(req.body);
       const request = await storage.createPartsRequest(validatedData);
-
-      // Notify Store Manager and Foreman
-      const storeManagers = await storage.getEmployeesByRole("store_manager");
-      const foremen = await storage.getEmployeesByRole("foreman");
-      const recipients = [...storeManagers, ...foremen];
-
-      for (const recipient of recipients) {
-        await createInAppNotification(
-          recipient.id,
-          "parts_request_created",
-          `New Parts Request #${request.id.substring(0, 8)} created by ${req.user?.fullName}`,
-          { requestId: request.id },
-          req.user?.id || '',
-          "info"
-        );
-      }
-
       res.status(201).json(request);
     } catch (error) {
       console.error("Error creating parts request:", error);
@@ -4174,19 +3224,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = insertPartsRequestSchema.parse(req.body);
       const request = await storage.updatePartsRequest(req.params.id, validatedData);
-
-      // Notify Requestor if status changed to approved or rejected
-      if (request.requestedById && (validatedData.status === 'approved' || validatedData.status === 'rejected')) {
-        await createInAppNotification(
-          request.requestedById,
-          `parts_request_${validatedData.status}`,
-          `Parts Request #${request.id.substring(0, 8)} ${validatedData.status} by ${req.user?.fullName}`,
-          { requestId: request.id },
-          req.user?.id || '',
-          validatedData.status === 'approved' ? "success" : "error"
-        );
-      }
-
       res.json(request);
     } catch (error) {
       console.error("Error updating parts request:", error);
@@ -4470,18 +3507,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Send notification to CEO
-      if (req.user?.role === "admin") {
+      if (process.env.RESEND_API_KEY) {
+        const userEmail = (req as any).user?.email || 'unknown';
         await sendCEONotification(createNotification(
           'updated',
           'spare_part',
           part.id,
-          req.user.username || 'unknown',
-          {
-            action: 'tutorial video uploaded',
-            videoUrl,
-            partNumber: part.partNumber,
-            partName: part.partName,
-          }
+          userEmail,
+          { action: 'tutorial video uploaded', videoUrl }
         ));
       }
 
@@ -4493,64 +3526,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error uploading tutorial video:", error);
       res.status(500).json({ error: "Failed to upload tutorial video" });
-    }
-  });
-
-  // Get presigned upload URL for tutorial videos (cloud storage - legacy)
-  app.post("/api/parts/:id/tutorial/upload-url", isCEOOrAdmin, async (req, res) => {
-    try {
-      const objectStorageService = new ObjectStorageService();
-      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
-
-      // Extract the object path from the upload URL (before query parameters)
-      const url = new URL(uploadURL);
-      const objectPath = objectStorageService.normalizeObjectEntityPath(url.origin + url.pathname);
-
-      res.json({
-        uploadURL,      // For uploading the file
-        objectPath      // For storing in database
-      });
-    } catch (error) {
-      console.error("Error generating upload URL:", error);
-      res.status(500).json({ error: "Failed to generate upload URL" });
-    }
-  });
-
-  // Update part with tutorial video URL after upload
-  app.put("/api/parts/:id/tutorial", isCEOOrAdmin, async (req, res) => {
-    try {
-      if (!req.body.tutorialVideoURL) {
-        return res.status(400).json({ error: "tutorialVideoURL is required" });
-      }
-
-      const objectStorageService = new ObjectStorageService();
-      const objectPath = objectStorageService.normalizeObjectEntityPath(
-        req.body.tutorialVideoURL,
-      );
-
-      // Update part with tutorial video URL
-      const part = await storage.updatePartMaintenance(req.params.id, {
-        tutorialVideoUrl: objectPath,
-      });
-
-      if (!part) {
-        return res.status(404).json({ error: "Part not found" });
-      }
-
-      if (req.user?.role === "admin") {
-        await sendCEONotification(createNotification(
-          'updated', 'spare_part', part.id, req.user.username || 'unknown',
-          { action: 'tutorial video uploaded', videoUrl: objectPath }
-        ));
-      }
-
-      res.json({
-        part,
-        objectPath
-      });
-    } catch (error) {
-      console.error("Error updating tutorial video:", error);
-      res.status(500).json({ error: "Failed to update tutorial video" });
     }
   });
 
@@ -6510,6 +5485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             plateNo: parsed.plateNumber || null,
             assetNo: assetNo,
             machineSerial: parsed.serialNumber || d365Equip.Serial_No || null,
+            plantNumber: d365Equip.Plant_Number || null,
             price: d365Equip.Unit_Price?.toString() || null,
             remarks: `Imported from D365 - ${parsed.description}`,
           };
@@ -7094,24 +6070,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           }
 
           // Map D365 item fields to spare parts schema
-          const stockQty = parseInt(item.InventoryField) || 0;
-          let stockStatus = 'out_of_stock';
-          if (stockQty === 0) {
-            stockStatus = 'out_of_stock';
-          } else if (stockQty > 0 && stockQty <= 5) {
-            stockStatus = 'low_stock';
-          } else {
-            stockStatus = 'in_stock';
-          }
-
           const newPart = await db.insert(spareParts).values({
             partNumber: item.No,
             partName: item.Description || item.No,
             description: item.Description || '',
             category: 'General', // Default category, can be updated later
             price: item.Unit_Cost ? String(item.Unit_Cost) : '0',
-            stockQuantity: stockQty,
-            stockStatus: stockStatus,
+            stockQuantity: parseInt(item.InventoryField) || 0,
+            stockStatus: (parseInt(item.InventoryField) || 0) > 0 ? 'in_stock' : 'out_of_stock',
             specifications: JSON.stringify({
               unitOfMeasure: item.Purch_Unit_of_Measure || '',
               lastModified: item.Last_Date_Modified || '',
@@ -7345,10 +6311,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         });
       }
 
-      // Never send encrypted credentials to frontend - security risk
-      const { mellatechUsername, mellatechPassword, ...safeSettings } = settings[0];
-
-      res.json(safeSettings);
+      res.json(settings[0]);
     } catch (error: any) {
       console.error("Error fetching system settings:", error);
       res.status(500).json({ error: "Failed to fetch system settings" });
@@ -7364,7 +6327,6 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           table_name,
           column_name,
           data_type,
-          udt_name,
           is_nullable,
           column_default,
           character_maximum_length
@@ -7418,27 +6380,11 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       // Generate CREATE TABLE statements
       tableMap.forEach((columns: any[], tableName: string) => {
         sqlContent += `\n-- Table: ${tableName}\n`;
-        sqlContent += `CREATE TABLE IF NOT EXISTS "${tableName}" (\n`;
+        sqlContent += `CREATE TABLE IF NOT EXISTS ${tableName} (\n`;
 
         const columnDefs = columns.map((col: any) => {
-          let dataType = col.data_type;
-
-          // Handle array types properly
-          if (col.data_type === 'ARRAY') {
-            // Extract the element type from udt_name (e.g., _text -> text[])
-            const elementType = col.udt_name.startsWith('_')
-              ? col.udt_name.substring(1)
-              : col.udt_name;
-            dataType = `${elementType}[]`;
-          } else if (col.data_type === 'USER-DEFINED') {
-            // Use the actual type name for custom types
-            dataType = col.udt_name;
-          }
-
-          // Quote column name to handle reserved keywords (column, user, table, etc.)
-          let def = `  "${col.column_name}" ${dataType}`;
-
-          if (col.character_maximum_length && !dataType.includes('[]')) {
+          let def = `  ${col.column_name} ${col.data_type}`;
+          if (col.character_maximum_length) {
             def += `(${col.character_maximum_length})`;
           }
           if (col.is_nullable === 'NO') {
@@ -7484,105 +6430,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
   });
 
-  // Employee Page Permissions API Routes
-
-  // Get all page permissions for all employees (Admin UI)
-  app.get("/api/employee-page-permissions", isCEOOrAdmin, async (_req, res) => {
-    try {
-      const permissions = await storage.getAllPagePermissions();
-      res.json(permissions);
-    } catch (error: any) {
-      console.error("Error fetching all page permissions:", error);
-      res.status(500).json({ error: "Failed to fetch page permissions" });
-    }
-  });
-
-  // Get page permissions for a specific employee
-  app.get("/api/employee-page-permissions/:employeeId", isAuthenticated, async (req, res) => {
-    try {
-      const { employeeId } = req.params;
-
-      // Users can only fetch their own permissions unless they're CEO/Admin
-      const userRole = req.user?.role?.toLowerCase();
-      if (req.user?.id !== employeeId && userRole !== "ceo" && userRole !== "admin") {
-        return res.status(403).json({ error: "Access denied" });
-      }
-
-      const permissions = await storage.getEmployeePagePermissions(employeeId);
-      res.json(permissions);
-    } catch (error: any) {
-      console.error("Error fetching employee page permissions:", error);
-      res.status(500).json({ error: "Failed to fetch employee page permissions" });
-    }
-  });
-
-  // Set/update page permission for an employee
-  app.post("/api/employee-page-permissions", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { insertEmployeePagePermissionSchema } = await import("@shared/schema");
-      const permissionData = insertEmployeePagePermissionSchema.parse(req.body);
-
-      const permission = await storage.setEmployeePagePermission(permissionData);
-      res.json(permission);
-    } catch (error: any) {
-      console.error("Error setting page permission:", error);
-      res.status(500).json({ error: "Failed to set page permission" });
-    }
-  });
-
-  // Remove page permission for an employee
-  app.delete("/api/employee-page-permissions", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { employeeId, pagePath } = req.body;
-
-      if (!employeeId || !pagePath) {
-        return res.status(400).json({ error: "employeeId and pagePath are required" });
-      }
-
-      const success = await storage.removeEmployeePagePermission(employeeId, pagePath);
-      if (success) {
-        res.json({ success: true });
-      } else {
-        res.status(404).json({ error: "Permission not found" });
-      }
-    } catch (error: any) {
-      console.error("Error removing page permission:", error);
-      res.status(500).json({ error: "Failed to remove page permission" });
-    }
-  });
-
-  // Bulk update page permissions for an employee
-  app.post("/api/employee-page-permissions/bulk", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { permissions } = req.body;
-
-      if (!Array.isArray(permissions)) {
-        return res.status(400).json({ error: "permissions must be an array" });
-      }
-
-      // Set each permission
-      const results = [];
-      for (const perm of permissions) {
-        const permission = await storage.setEmployeePagePermission({
-          employeeId: perm.employeeId,
-          pagePath: perm.pagePath,
-          isAllowed: perm.isAllowed,
-        });
-        results.push(permission);
-      }
-
-      res.json({ success: true, count: results.length });
-    } catch (error: any) {
-      console.error("Error bulk updating page permissions:", error);
-      res.status(500).json({ error: "Failed to bulk update page permissions" });
-    }
-  });
-
   // Update system settings
   app.patch("/api/system-settings", isCEOOrAdmin, async (req, res) => {
     try {
       const { systemSettings, insertSystemSettingsSchema } = await import("@shared/schema");
-      const { encrypt } = await import("./utils/encryption");
       const settingsData = insertSystemSettingsSchema.partial().parse(req.body);
 
       // Validate server settings if provided
@@ -7603,14 +6454,6 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         if (port < 1 || port > 65535) {
           return res.status(400).json({ error: "Port must be between 1 and 65535" });
         }
-      }
-
-      // Encrypt MellaTech credentials if provided
-      if (settingsData.mellatechUsername) {
-        settingsData.mellatechUsername = encrypt(settingsData.mellatechUsername);
-      }
-      if (settingsData.mellatechPassword) {
-        settingsData.mellatechPassword = encrypt(settingsData.mellatechPassword);
       }
 
       // Get current user ID from session
@@ -7745,48 +6588,39 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
   // Dashboard analytics endpoint - dynamic data with filters
   app.get("/api/dashboard/analytics", isAuthenticated, async (req, res) => {
     try {
-      const { workOrders, workshops, workOrderRequiredParts, spareParts, workOrderWorkshops } = await import("@shared/schema");
-      const { sql: drizzleSql, and, gte, lte, between, eq, inArray } = await import("drizzle-orm");
+      const { workOrders, workshops, workOrderRequiredParts, spareParts } = await import("@shared/schema");
+      const { sql: drizzleSql, and, gte, lte, between } = await import("drizzle-orm");
 
       // Parse query parameters
-      const timePeriod = req.query.timePeriod as string || 'annual'; // daily, weekly, monthly, q1, q2, q3, q4, annual, custom
+      const timePeriod = req.query.timePeriod as string || 'annual'; // daily, weekly, monthly, q1, q2, q3, q4, annual
       const workshopId = req.query.workshopId as string | undefined; // Optional workshop filter
       const year = parseInt(req.query.year as string) || new Date().getFullYear();
-      const startDateParam = req.query.startDate as string | undefined;
-      const endDateParam = req.query.endDate as string | undefined;
-
-      // Helper function to get current week start (Monday)
-      const getCurrentWeekStart = () => {
-        const now = new Date();
-        const day = now.getDay();
-        const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
-        const monday = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
-        return monday;
-      };
 
       // Build date filter based on time period
       let dateFilter: any = {};
       const startOfYear = new Date(year, 0, 1);
       const endOfYear = new Date(year, 11, 31, 23, 59, 59);
 
-      if (timePeriod === 'custom' && startDateParam && endDateParam) {
-        // Custom date range
-        const customStart = new Date(startDateParam);
-        const customEnd = new Date(endDateParam);
-        customEnd.setHours(23, 59, 59, 999); // Set to end of day
-        dateFilter = { start: customStart, end: customEnd };
-      } else if (timePeriod === 'q1') {
-        const { start, end } = getFiscalQuarterRange(1, year);
-        dateFilter = { start, end };
+      if (timePeriod === 'q1') {
+        dateFilter = {
+          start: new Date(year, 0, 1),
+          end: new Date(year, 2, 31, 23, 59, 59)
+        };
       } else if (timePeriod === 'q2') {
-        const { start, end } = getFiscalQuarterRange(2, year);
-        dateFilter = { start, end };
+        dateFilter = {
+          start: new Date(year, 3, 1),
+          end: new Date(year, 5, 30, 23, 59, 59)
+        };
       } else if (timePeriod === 'q3') {
-        const { start, end } = getFiscalQuarterRange(3, year);
-        dateFilter = { start, end };
+        dateFilter = {
+          start: new Date(year, 6, 1),
+          end: new Date(year, 8, 30, 23, 59, 59)
+        };
       } else if (timePeriod === 'q4') {
-        const { start, end } = getFiscalQuarterRange(4, year);
-        dateFilter = { start, end };
+        dateFilter = {
+          start: new Date(year, 9, 1),
+          end: new Date(year, 11, 31, 23, 59, 59)
+        };
       } else if (timePeriod === 'monthly') {
         const month = parseInt(req.query.month as string) || new Date().getMonth();
         const lastDay = new Date(year, month + 1, 0).getDate();
@@ -7795,20 +6629,17 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           end: new Date(year, month, lastDay, 23, 59, 59)
         };
       } else if (timePeriod === 'weekly') {
-        // Week starts on the date specified, or defaults to current week (Monday)
-        const weekStartInput = req.query.weekStart ? new Date(req.query.weekStart as string) : getCurrentWeekStart();
-        const weekStart = new Date(weekStartInput.getFullYear(), weekStartInput.getMonth(), weekStartInput.getDate(), 0, 0, 0, 0);
-        const weekEnd = new Date(weekStartInput.getFullYear(), weekStartInput.getMonth(), weekStartInput.getDate() + 6, 23, 59, 59, 999);
+        // Week starts on the date specified
+        const weekStart = req.query.weekStart ? new Date(req.query.weekStart as string) : new Date();
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        weekEnd.setHours(23, 59, 59);
         dateFilter = { start: weekStart, end: weekEnd };
       } else if (timePeriod === 'daily') {
-        // Day specified or defaults to today
-        console.log('[DEBUG] Daily period - req.query.date:', req.query.date);
-        const dayInput = req.query.date ? new Date(req.query.date as string) : new Date();
-        console.log('[DEBUG] dayInput:', dayInput, 'ISO:', dayInput.toISOString());
-        const dayStart = new Date(dayInput.getFullYear(), dayInput.getMonth(), dayInput.getDate(), 0, 0, 0, 0);
-        const dayEnd = new Date(dayInput.getFullYear(), dayInput.getMonth(), dayInput.getDate(), 23, 59, 59, 999);
-        console.log('[DEBUG] dayStart:', dayStart.toISOString(), 'dayEnd:', dayEnd.toISOString());
-        dateFilter = { start: dayStart, end: dayEnd };
+        const day = req.query.date ? new Date(req.query.date as string) : new Date();
+        const dayEnd = new Date(day);
+        dayEnd.setHours(23, 59, 59);
+        dateFilter = { start: day, end: dayEnd };
       } else {
         // Annual
         dateFilter = { start: startOfYear, end: endOfYear };
@@ -7817,16 +6648,10 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       // Build filters array
       const filters: any[] = [];
 
-      // Workshop filtering using EXISTS subquery
-      if (workshopId && workshopId !== 'all') {
-        filters.push(
-          drizzleSql`EXISTS (
-            SELECT 1 FROM ${workOrderWorkshops}
-            WHERE ${workOrderWorkshops.workOrderId} = ${workOrders.id}
-            AND ${workOrderWorkshops.workshopId} = ${workshopId}
-          )`
-        );
-      }
+      // Note: Workshop filtering removed - should be reimplemented using work_order_workshops table
+      // if (workshopId && workshopId !== 'all') {
+      //   // Need to join with work_order_workshops table for multi-workshop filtering
+      // }
 
       // Add date filter for completed work orders
       if (dateFilter.start && dateFilter.end) {
@@ -7836,32 +6661,24 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
       // Fetch completed work orders with filters
       const completedOrders = await db.select().from(workOrders)
-        .where(filters.length > 0
-          ? and(eq(workOrders.status, 'completed'), ...filters)
-          : eq(workOrders.status, 'completed')
-        );
+        .where(and(
+          eq(workOrders.status, 'completed'),
+          ...filters
+        ));
 
       // Fetch all work orders in the date range (for planned count)
       const allOrdersFilters: any[] = [];
-
-      // Workshop filtering for all orders
-      if (workshopId && workshopId !== 'all') {
-        allOrdersFilters.push(
-          drizzleSql`EXISTS (
-            SELECT 1 FROM ${workOrderWorkshops}
-            WHERE ${workOrderWorkshops.workOrderId} = ${workOrders.id}
-            AND ${workOrderWorkshops.workshopId} = ${workshopId}
-          )`
-        );
-      }
-
+      // Note: Workshop filtering removed - should be reimplemented using work_order_workshops table
+      // if (workshopId && workshopId !== 'all') {
+      //   // Need to join with work_order_workshops table for multi-workshop filtering
+      // }
       if (dateFilter.start && dateFilter.end) {
         allOrdersFilters.push(gte(workOrders.createdAt, dateFilter.start));
         allOrdersFilters.push(lte(workOrders.createdAt, dateFilter.end));
       }
 
       const allOrders = await db.select().from(workOrders)
-        .where(allOrdersFilters.length > 0 ? and(...allOrdersFilters) : undefined);
+        .where(and(...allOrdersFilters));
 
       // Fetch workshops data
       const workshopsData = await db.select().from(workshops);
@@ -7903,226 +6720,21 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
       // Active workshops count
       const activeWorkshops = workshopsData.filter((w: any) => w.isActive).length;
 
-      // Calculate cost analytics using NEW cost tracking fields
-      let totalPlannedLaborCost = 0;
-      let totalActualLaborCost = 0;
-      let totalPlannedLubricantCost = 0;
-      let totalActualLubricantCost = 0;
-      let totalPlannedOutsourceCost = 0;
-      let totalActualOutsourceCost = 0;
-      let totalPlannedSparePartsCost = 0;
-      let totalActualSparePartsCost = 0;
-      let totalPlannedCostNew = 0;
-      let totalActualCostNew = 0;
-
-      for (const order of completedOrders) {
-        const plannedLabor = parseFloat(order.plannedLaborCost || '0');
-        const actualLabor = parseFloat(order.actualLaborCost || '0');
-        const plannedLubricant = parseFloat(order.plannedLubricantCost || '0');
-        const actualLubricant = parseFloat(order.actualLubricantCost || '0');
-        const plannedOutsource = parseFloat(order.plannedOutsourceCost || '0');
-        const actualOutsource = parseFloat(order.actualOutsourceCost || '0');
-        const totalPlanned = parseFloat(order.totalPlannedCost || '0');
-        const totalActual = parseFloat(order.totalActualCost || '0');
-
-        totalPlannedLaborCost += plannedLabor;
-        totalActualLaborCost += actualLabor;
-        totalPlannedLubricantCost += plannedLubricant;
-        totalActualLubricantCost += actualLubricant;
-        totalPlannedOutsourceCost += plannedOutsource;
-        totalActualOutsourceCost += actualOutsource;
-        totalPlannedCostNew += totalPlanned;
-        totalActualCostNew += totalActual;
-      }
-
-      // Calculate spare parts costs from parts receipts
-      const { partsReceipts } = await import("@shared/schema");
-      const completedWorkOrderIds = completedOrders.map((o: typeof completedOrders[number]) => o.id);
-
-      if (completedWorkOrderIds.length > 0) {
-        // Fetch all parts receipts for completed work orders
-        const receipts = await db
-          .select({
-            workOrderId: partsReceipts.workOrderId,
-            sparePartId: partsReceipts.sparePartId,
-            quantityIssued: partsReceipts.quantityIssued,
-          })
-          .from(partsReceipts)
-          .where(inArray(partsReceipts.workOrderId, completedWorkOrderIds));
-
-        // Get unique spare part IDs
-        const sparePartIds = Array.from(new Set(receipts.map((r: typeof receipts[number]) => r.sparePartId).filter(Boolean))) as string[];
-
-        if (sparePartIds.length > 0) {
-          // Fetch spare parts prices
-          const parts = await db
-            .select({
-              id: spareParts.id,
-              price: spareParts.price,
-            })
-            .from(spareParts)
-            .where(inArray(spareParts.id, sparePartIds));
-
-          // Create a map of part ID to price
-          const partPriceMap = new Map();
-          parts.forEach((p: typeof parts[number]) => {
-            if (p.price) {
-              partPriceMap.set(p.id, parseFloat(p.price));
-            }
-          });
-
-          // Calculate total spare parts cost
-          for (const receipt of receipts) {
-            if (receipt.sparePartId && partPriceMap.has(receipt.sparePartId)) {
-              const price = partPriceMap.get(receipt.sparePartId);
-              const cost = price * (receipt.quantityIssued || 0);
-              totalActualSparePartsCost += cost;
-            }
-          }
-        }
-      }
-
-      // Calculate derived metrics
-      const totalMaintenanceCost = totalActualLaborCost + totalActualLubricantCost + totalActualOutsourceCost;
-      const avgCostPerWorkOrder = totalCompleted > 0 ? totalActualCostNew / totalCompleted : 0;
-      const costVarianceAmount = totalActualCostNew - totalPlannedCostNew;
-      const costVariancePct = totalPlannedCostNew > 0 ? (costVarianceAmount / totalPlannedCostNew) * 100 : 0;
-
-      // Task 8: Cost Charts Data - SQL aggregation with CTEs
-      const { equipment, equipmentCategories, garages, workOrderGarages } = await import("@shared/schema");
-      let costCharts: any = {
-        monthlyTrends: [],
-        breakdown: { labor: 0, lubricants: 0, outsource: 0 },
-        byEquipmentType: [],
-        byGarage: [],
-      };
-
-      try {
-        // Build workshop filter clause for SQL
-        const workshopFilterSQL = workshopId && workshopId !== 'all'
-          ? sql`AND EXISTS (SELECT 1 FROM work_order_workshops WHERE work_order_workshops.work_order_id = wo.id AND work_order_workshops.workshop_id = ${workshopId})`
-          : sql``;
-
-        // Execute single SQL query with CTEs for all cost chart aggregations
-        const costChartsQuery = sql`
-          WITH monthly_series AS (
-            SELECT generate_series(
-              date_trunc('month', ${dateFilter.start}::timestamp),
-              date_trunc('month', ${dateFilter.end}::timestamp),
-              '1 month'::interval
-            )::timestamp AS month
-          ),
-          monthly_costs AS (
-            SELECT 
-              date_trunc('month', wo.completed_at)::timestamp AS month,
-              COALESCE(SUM(wo.actual_labor_cost), 0) AS labor_actual,
-              COALESCE(SUM(wo.actual_lubricant_cost), 0) AS lubricant_actual,
-              COALESCE(SUM(wo.actual_outsource_cost), 0) AS outsource_actual,
-              COALESCE(SUM(wo.total_actual_cost), 0) AS total_actual
-            FROM work_orders wo
-            WHERE wo.status = 'completed'
-              AND wo.completed_at >= ${dateFilter.start}
-              AND wo.completed_at <= ${dateFilter.end}
-              ${workshopFilterSQL}
-            GROUP BY date_trunc('month', wo.completed_at)
-          ),
-          equipment_costs AS (
-            SELECT 
-              COALESCE(ec.name, 'Unassigned') AS equipment_type,
-              COALESCE(SUM(wo.total_actual_cost), 0) AS total_cost
-            FROM work_orders wo
-            LEFT JOIN equipment e ON wo.equipment_id = e.id
-            LEFT JOIN equipment_categories ec ON e.category_id = ec.id
-            WHERE wo.status = 'completed'
-              AND wo.completed_at >= ${dateFilter.start}
-              AND wo.completed_at <= ${dateFilter.end}
-              ${workshopFilterSQL}
-            GROUP BY ec.id, ec.name
-            ORDER BY total_cost DESC
-          ),
-          garage_costs AS (
-            SELECT 
-              COALESCE(g.name, 'Unassigned') AS garage_name,
-              COALESCE(SUM(wo.total_actual_cost), 0) AS total_cost
-            FROM work_orders wo
-            LEFT JOIN work_order_garages wog ON wo.id = wog.work_order_id
-            LEFT JOIN garages g ON wog.garage_id = g.id
-            WHERE wo.status = 'completed'
-              AND wo.completed_at >= ${dateFilter.start}
-              AND wo.completed_at <= ${dateFilter.end}
-              ${workshopFilterSQL}
-            GROUP BY g.id, g.name
-            ORDER BY total_cost DESC
-          )
-          SELECT 
-            json_build_object(
-              'monthlyTrends', COALESCE((
-                SELECT json_agg(json_build_object(
-                  'month', to_char(ms.month, 'YYYY-MM'),
-                  'laborActual', COALESCE(mc.labor_actual, 0),
-                  'lubricantActual', COALESCE(mc.lubricant_actual, 0),
-                  'outsourceActual', COALESCE(mc.outsource_actual, 0),
-                  'totalActual', COALESCE(mc.total_actual, 0)
-                ) ORDER BY ms.month)
-                FROM monthly_series ms
-                LEFT JOIN monthly_costs mc ON ms.month = mc.month
-              ), '[]'::json),
-              'breakdown', json_build_object(
-                'labor', COALESCE((SELECT SUM(labor_actual) FROM monthly_costs), 0),
-                'lubricants', COALESCE((SELECT SUM(lubricant_actual) FROM monthly_costs), 0),
-                'outsource', COALESCE((SELECT SUM(outsource_actual) FROM monthly_costs), 0)
-              ),
-              'byEquipmentType', COALESCE((
-                SELECT json_agg(json_build_object(
-                  'name', equipment_type,
-                  'value', total_cost
-                ))
-                FROM equipment_costs
-                WHERE total_cost > 0
-              ), '[]'::json),
-              'byGarage', COALESCE((
-                SELECT json_agg(json_build_object(
-                  'name', garage_name,
-                  'value', total_cost
-                ))
-                FROM garage_costs
-                WHERE total_cost > 0
-              ), '[]'::json)
-            ) AS cost_charts
-        `;
-
-        const costChartsResult = await db.execute(costChartsQuery);
-        if (costChartsResult.rows && costChartsResult.rows.length > 0) {
-          costCharts = costChartsResult.rows[0].cost_charts || costCharts;
-        }
-      } catch (error: any) {
-        console.error("Error calculating cost charts:", error);
-        // Continue with default empty costCharts structure
-      }
-
-      // Calculate quarterly data for the year (fiscal quarters based on Ethiopian calendar)
+      // Calculate quarterly data for the year
       const quarterlyData = [];
       const quarters = [
-        { name: 'FY Q1', ...getFiscalQuarterRange(1, year) },
-        { name: 'FY Q2', ...getFiscalQuarterRange(2, year) },
-        { name: 'FY Q3', ...getFiscalQuarterRange(3, year) },
-        { name: 'FY Q4', ...getFiscalQuarterRange(4, year) },
+        { name: 'Q1', start: new Date(year, 0, 1), end: new Date(year, 2, 31, 23, 59, 59), months: [0, 1, 2] },
+        { name: 'Q2', start: new Date(year, 3, 1), end: new Date(year, 5, 30, 23, 59, 59), months: [3, 4, 5] },
+        { name: 'Q3', start: new Date(year, 6, 1), end: new Date(year, 8, 30, 23, 59, 59), months: [6, 7, 8] },
+        { name: 'Q4', start: new Date(year, 9, 1), end: new Date(year, 11, 31, 23, 59, 59), months: [9, 10, 11] },
       ];
 
       for (const quarter of quarters) {
         const qFilters: any[] = [];
-
-        // Workshop filtering for quarterly data
-        if (workshopId && workshopId !== 'all') {
-          qFilters.push(
-            drizzleSql`EXISTS (
-              SELECT 1 FROM ${workOrderWorkshops}
-              WHERE ${workOrderWorkshops.workOrderId} = ${workOrders.id}
-              AND ${workOrderWorkshops.workshopId} = ${workshopId}
-            )`
-          );
-        }
-
+        // Note: Workshop filtering removed - should be reimplemented using work_order_workshops table
+        // if (workshopId && workshopId !== 'all') {
+        //   // Need to join with work_order_workshops table for multi-workshop filtering
+        // }
         qFilters.push(gte(workOrders.createdAt, quarter.start));
         qFilters.push(lte(workOrders.createdAt, quarter.end));
 
@@ -8170,35 +6782,14 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         });
       }
 
-      // Build workshop→order mapping once (efficient approach per architect guidance)
-      // This handles multi-workshop assignments: each workshop gets full metrics for all assigned orders
-      const allWorkOrderIds = allOrders.map((o: any) => o.id);
-      const workshopOrderMappings = await db
-        .select({
-          workshopId: workOrderWorkshops.workshopId,
-          workOrderId: workOrderWorkshops.workOrderId,
-        })
-        .from(workOrderWorkshops)
-        .where(inArray(workOrderWorkshops.workOrderId, allWorkOrderIds));
-
-      // Build Map<workshopId, Set<workOrderId>> for efficient lookups
-      const workshopToOrdersMap = new Map<string, Set<string>>();
-      for (const mapping of workshopOrderMappings) {
-        if (!workshopToOrdersMap.has(mapping.workshopId)) {
-          workshopToOrdersMap.set(mapping.workshopId, new Set());
-        }
-        workshopToOrdersMap.get(mapping.workshopId)!.add(mapping.workOrderId);
-      }
-
       // Calculate workshop/department performance
       const workshopPerformance = [];
       for (const workshop of workshopsData) {
         if (!workshop.isActive) continue;
 
-        // Get work orders for this workshop using pre-built mapping
-        const workshopWorkOrderIds = workshopToOrdersMap.get(workshop.id) || new Set();
-        const workshopOrders = allOrders.filter((o: any) => workshopWorkOrderIds.has(o.id));
-        const workshopCompleted = completedOrders.filter((o: any) => workshopWorkOrderIds.has(o.id));
+        // Get work orders for this workshop
+        const workshopOrders = allOrders.filter((o: any) => o.workshopId === workshop.id);
+        const workshopCompleted = completedOrders.filter((o: any) => o.workshopId === workshop.id);
 
         // Calculate quarterly accomplishment for this workshop
         const q1Orders = workshopOrders.filter((o: any) => {
@@ -8269,29 +6860,6 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
           outsource: parseFloat(totalOutsourceCost.toFixed(2)),
           overhead: parseFloat(totalOverheadCost.toFixed(2)),
         },
-        costAnalytics: {
-          labor: {
-            planned: parseFloat(totalPlannedLaborCost.toFixed(2)),
-            actual: parseFloat(totalActualLaborCost.toFixed(2)),
-          },
-          lubricants: {
-            planned: parseFloat(totalPlannedLubricantCost.toFixed(2)),
-            actual: parseFloat(totalActualLubricantCost.toFixed(2)),
-          },
-          outsource: {
-            planned: parseFloat(totalPlannedOutsourceCost.toFixed(2)),
-            actual: parseFloat(totalActualOutsourceCost.toFixed(2)),
-          },
-          spareParts: {
-            planned: parseFloat(totalPlannedSparePartsCost.toFixed(2)),
-            actual: parseFloat(totalActualSparePartsCost.toFixed(2)),
-          },
-          totalMaintenanceCost: parseFloat(totalMaintenanceCost.toFixed(2)),
-          avgCostPerWorkOrder: parseFloat(avgCostPerWorkOrder.toFixed(2)),
-          costVariancePct: parseFloat(costVariancePct.toFixed(2)),
-          costVarianceAmount: parseFloat(costVarianceAmount.toFixed(2)),
-        },
-        costCharts,
         quarterlyData,
         workshopPerformance,
         workshops: workshopsData.filter((w: any) => w.isActive).map((w: any) => ({
@@ -8352,498 +6920,142 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }
   });
 
-  // MellaTech Fleet Tracking API Routes
-  app.get("/api/mellatech/status", isAuthenticated, async (req, res) => {
-    try {
-      const { systemSettings } = await import("@shared/schema");
-      let configured = false;
-
-      // Priority 1: Check for API key in environment
-      if (process.env.MELLATECH_API_KEY) {
-        configured = true;
-      } else {
-        // Priority 2: Check database for username/password
-        const settings = await db.select().from(systemSettings).limit(1);
-        if (settings.length > 0 && settings[0].mellatechUsername && settings[0].mellatechPassword) {
-          configured = true;
-        } else if (process.env.MELLATECH_USERNAME && process.env.MELLATECH_PASSWORD) {
-          // Priority 3: Fall back to environment variables for username/password
-          configured = true;
-        }
-      }
-
-      res.json({ configured });
-    } catch (error: any) {
-      console.error("Error checking MellaTech status:", error);
-      res.status(500).json({ configured: false });
-    }
-  });
-
-  app.get("/api/mellatech/test", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { getMellaTechService } = await import("./services/mellatech");
-      const mellaTech = await getMellaTechService();
-      const result = await mellaTech.testConnection();
-      res.json(result);
-    } catch (error: any) {
-      console.error("Error testing MellaTech connection:", error);
-      res.status(500).json({ success: false, message: error.message });
-    }
-  });
-
-  app.post("/api/mellatech/sync", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { getMellaTechService } = await import("./services/mellatech");
-      const mellaTech = await getMellaTechService();
-
-      const vehicles = await mellaTech.getVehicles();
-
-      const vehiclesData = vehicles.map(v => ({
-        mellaTechId: v.id,
-        id: v.id,
-        name: v.name,
-        plateNumber: v.plateNumber,
-        speed: v.speed,
-        latitude: v.latitude,
-        longitude: v.longitude,
-        altitude: v.altitude,
-        angle: v.angle,
-        battery: v.battery,
-        distance: v.distance,
-        status: v.status,
-        lastUpdate: v.lastUpdate,
-      }));
-
-      await storage.syncMellaTechVehicles(vehiclesData);
-
-      res.json({
-        success: true,
-        message: `Synced ${vehicles.length} vehicles`,
-        count: vehicles.length
-      });
-    } catch (error: any) {
-      console.error("Error syncing MellaTech vehicles:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/mellatech/vehicles", isAuthenticated, async (req, res) => {
-    try {
-      const vehicles = await storage.getAllMellaTechVehicles();
-      res.json(vehicles);
-    } catch (error: any) {
-      console.error("Error fetching MellaTech vehicles:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/mellatech/vehicles/:id", isAuthenticated, async (req, res) => {
-    try {
-      const vehicle = await storage.getMellaTechVehicleById(req.params.id);
-      if (!vehicle) {
-        return res.status(404).json({ error: "Vehicle not found" });
-      }
-      res.json(vehicle);
-    } catch (error: any) {
-      console.error("Error fetching MellaTech vehicle:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/mellatech/vehicles/by-plate/:plateNumber", isAuthenticated, async (req, res) => {
-    try {
-      const vehicle = await storage.getMellaTechVehicleByPlateNumber(req.params.plateNumber);
-      if (!vehicle) {
-        return res.status(404).json({ error: "Vehicle not found", found: false });
-      }
-      res.json({ ...vehicle, found: true });
-    } catch (error: any) {
-      console.error("Error fetching MellaTech vehicle by plate:", error);
-      res.status(500).json({ error: error.message, found: false });
-    }
-  });
-
-  app.post("/api/mellatech/vehicles/:id/link-equipment", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { equipmentId } = req.body;
-
-      if (!equipmentId) {
-        return res.status(400).json({ error: "Equipment ID is required" });
-      }
-
-      await storage.linkMellaTechVehicleToEquipment(req.params.id, equipmentId);
-
-      res.json({ success: true, message: "Vehicle linked to equipment" });
-    } catch (error: any) {
-      console.error("Error linking vehicle to equipment:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/mellatech/alerts", isAuthenticated, async (req, res) => {
-    try {
-      const { unreadOnly, limit } = req.query;
-
-      const alerts = await storage.getMellaTechAlerts({
-        unreadOnly: unreadOnly === 'true',
-        limit: limit ? parseInt(limit as string) : undefined,
-      });
-
-      res.json(alerts);
-    } catch (error: any) {
-      console.error("Error fetching MellaTech alerts:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/mellatech/alerts/:id/mark-read", isAuthenticated, async (req, res) => {
-    try {
-      await storage.markAlertAsRead(req.params.id);
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error("Error marking alert as read:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // ============================================
-  // ETHIOPIAN CALENDAR YEAR MANAGEMENT ROUTES
-  // ============================================
-
-  // Get Ethiopian year information
-  app.get("/api/ethiopian-year/info", isCEOOrAdmin, async (_req, res) => {
-    try {
-      const { getEthiopianYearInfo } = await import("./ethiopian-calendar");
-      const yearInfo = getEthiopianYearInfo();
-
-      // Get current settings
-      const settings = await storage.getSystemSettings();
-
-      res.json({
-        ...yearInfo,
-        activeYear: settings?.activeEthiopianYear,
-        lastClosureDate: settings?.lastYearClosureDate,
-        planningTargetsLocked: settings?.planningTargetsLocked ?? true,
-      });
-    } catch (error: any) {
-      console.error("Error getting Ethiopian year info:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Close current Ethiopian year and start new year
-  app.post("/api/ethiopian-year/close", isCEOOrAdmin, async (req, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: "Not authenticated" });
-      }
-
-      const { notes } = req.body;
-
-      const closureLog = await storage.closeEthiopianYear(req.user.id, notes);
-
-      res.json({
-        success: true,
-        message: "Year closed successfully",
-        closureLog,
-      });
-    } catch (error: any) {
-      console.error("Error closing Ethiopian year:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get year closure logs
-  app.get("/api/year-closure-logs", isCEOOrAdmin, async (_req, res) => {
-    try {
-      const logs = await storage.getYearClosureLogs();
-      res.json(logs);
-    } catch (error: any) {
-      console.error("Error fetching year closure logs:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get archived work orders
-  app.get("/api/archived-work-orders", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { ethiopianYear } = req.query;
-      const year = ethiopianYear ? parseInt(ethiopianYear as string) : undefined;
-
-      const archivedOrders = await storage.getArchivedWorkOrders(year);
-      res.json(archivedOrders);
-    } catch (error: any) {
-      console.error("Error fetching archived work orders:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Lock/unlock planning targets
-  app.post("/api/planning-targets/lock", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { locked } = req.body;
-
-      if (typeof locked !== 'boolean') {
-        return res.status(400).json({ error: "Invalid lock status" });
-      }
-
-      await storage.updatePlanningTargetsLockStatus(locked);
-
-      res.json({
-        success: true,
-        message: locked ? "Planning targets locked" : "Planning targets unlocked",
-      });
-    } catch (error: any) {
-      console.error("Error updating planning targets lock status:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Seed sample data endpoint (Admin only)
-  app.post("/api/admin/seed-sample-data", isAuthenticated, async (req, res) => {
-    try {
-      // Check if user is admin
-      if (!hasRole(req.user, 'admin') && !hasRole(req.user, 'ceo')) {
-        return res.status(403).json({ error: "Forbidden - Admin access required" });
-      }
-
-      const { seedSampleData } = await import("./seed-sample-data");
-      await seedSampleData();
-
-      res.json({
-        success: true,
-        message: "Sample data seeded successfully! Check the database for new work orders, requisitions, inspections, and archived data."
-      });
-    } catch (error: any) {
-      console.error("Error seeding sample data:", error);
-      res.status(500).json({ error: "Failed to seed sample data", details: error.message });
-    }
-  });
-
-  // Database Management endpoints (Admin only)
-  // Safe schema sync endpoint - updates database schema to match code
-  app.post("/api/admin/sync-schema", isCEOOrAdmin, async (req, res) => {
-    try {
-      const { spawn } = await import('child_process');
-
-      // Use db:push --force as recommended by the system
-      // This safely syncs the schema without manual migrations
-      // The --force flag bypasses interactive prompts in development
-      const pushProcess = spawn('npm', ['run', 'db:push', '--', '--force'], {
-        stdio: 'pipe',
-        shell: true,
-        env: { ...process.env, FORCE_COLOR: '0' }
-      });
-
-      let pushOutput = '';
-      let pushError = '';
-
-      pushProcess.stdout.on('data', (data) => {
-        const text = data.toString();
-        pushOutput += text;
-        console.log('[Schema Sync]', text);
-      });
-
-      pushProcess.stderr.on('data', (data) => {
-        const text = data.toString();
-        pushError += text;
-        console.error('[Schema Sync]', text);
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          pushProcess.kill();
-          reject(new Error('Schema sync timed out after 60 seconds'));
-        }, 60000);
-
-        pushProcess.on('close', (code) => {
-          clearTimeout(timeout);
-
-          if (code === 0) {
-            resolve();
-          } else {
-            const allOutput = pushOutput + pushError;
-            reject(new Error(`Schema sync failed: ${allOutput.substring(0, 500)}`));
-          }
-        });
-      });
-
-      res.json({
-        success: true,
-        message: 'Database schema synced successfully',
-        output: pushOutput,
-        info: 'Schema has been updated to match your code. Review the changes above.'
-      });
-    } catch (error: any) {
-      console.error('Schema sync error:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to sync database schema',
-        error: error.message
-      });
-    }
-  });
-
-  // Get database schema info (tables and column counts)
-  app.get("/api/admin/schema-info", isCEOOrAdmin, async (req, res) => {
-    try {
-      // Query PostgreSQL for current schema information
-      const tablesQuery = await db.execute(sql`
-        SELECT 
-          table_name,
-          (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = t.table_name) as column_count
-        FROM information_schema.tables t
-        WHERE table_schema = 'public' 
-        AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-      `);
-
-      res.json({
-        success: true,
-        tables: tablesQuery.rows
-      });
-    } catch (error: any) {
-      console.error('Schema info error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Failed to fetch schema info',
-        error: error.message
-      });
-    }
-  });
-
-  // Helper function to calculate employee performance
-  async function calculateEmployeePerformance(startDate: Date, endDate: Date) {
-    const { db } = await import("./db");
-
-    // Get all completed work orders in the time period
-    const completedWorkOrders = await db
-      .select()
-      .from(workOrders)
-      .where(
-        and(
-          eq(workOrders.status, "completed"),
-          gte(workOrders.completedAt, startDate),
-          lte(workOrders.completedAt, endDate)
-        )
-      );
-
-    if (completedWorkOrders.length === 0) {
-      return [];
-    }
-
-    const workOrderIds = completedWorkOrders.map((wo: any) => wo.id);
-
-    // Get all team member assignments for these work orders
-    const memberships = await db
-      .select()
-      .from(workOrderMemberships)
-      .where(
-        and(
-          inArray(workOrderMemberships.workOrderId, workOrderIds),
-          eq(workOrderMemberships.role, "team_member"),
-          eq(workOrderMemberships.isActive, true)
-        )
-      );
-
-    if (memberships.length === 0) {
-      return [];
-    }
-
-    // Get all time tracking records for these work orders
-    const timeRecords = await db
-      .select()
-      .from(workOrderTimeTracking)
-      .where(inArray(workOrderTimeTracking.workOrderId, workOrderIds));
-
-    // Group time records by work order
-    const timeRecordsByWorkOrder = timeRecords.reduce((acc: any, record: any) => {
-      if (!acc[record.workOrderId]) {
-        acc[record.workOrderId] = [];
-      }
-      acc[record.workOrderId].push(record);
-      return acc;
-    }, {});
-
-    // Calculate performance for each employee
-    const employeeStats: Record<string, {
-      workOrdersCompleted: number;
-      totalElapsedHours: number;
-      employeeId: string;
-    }> = {};
-
-    memberships.forEach((membership: any) => {
-      if (!employeeStats[membership.employeeId]) {
-        employeeStats[membership.employeeId] = {
-          workOrdersCompleted: 0,
-          totalElapsedHours: 0,
-          employeeId: membership.employeeId,
-        };
-      }
-
-      const workOrder = completedWorkOrders.find((wo: any) => wo.id === membership.workOrderId);
-      if (!workOrder) return;
-
-      employeeStats[membership.employeeId].workOrdersCompleted += 1;
-
-      // Calculate elapsed time for this work order
-      const timeTrackingData = timeRecordsByWorkOrder[membership.workOrderId] || [];
-      const timerResult = calculateWorkOrderElapsedTime(
-        workOrder.startedAt,
-        workOrder.completedAt,
-        workOrder.status,
-        timeTrackingData
-      );
-
-      employeeStats[membership.employeeId].totalElapsedHours += timerResult.elapsedHours;
-    });
-
-    // Get employee details
-    const employeeIds = Object.keys(employeeStats);
-    const employeeDetails = await db
-      .select()
-      .from(employees)
-      .where(inArray(employees.id, employeeIds));
-
-    // Calculate performance scores and create result array
-    const performance = employeeDetails.map((employee: any) => {
-      const stats = employeeStats[employee.id];
-      const avgCompletionTime = stats.workOrdersCompleted > 0
-        ? stats.totalElapsedHours / stats.workOrdersCompleted
-        : 0;
-
-      // Performance score formula:
-      // Higher score for more completed work orders
-      // Higher score for faster completion times
-      // Formula: (workOrders * 100) / (avgTime + 1)
-      // The +1 prevents division by zero and gives weight to completion
-      const performanceScore = Math.round(
-        (stats.workOrdersCompleted * 100) / (avgCompletionTime + 1)
-      );
-
-      return {
-        employeeId: employee.id,
-        fullName: employee.fullName,
-        role: employee.role,
-        tasksCompleted: 0, // Not tracked currently
-        workOrdersCompleted: stats.workOrdersCompleted,
-        totalLaborHours: parseFloat(stats.totalElapsedHours.toFixed(2)),
-        avgCompletionTime: parseFloat(avgCompletionTime.toFixed(2)),
-        requisitionsProcessed: 0, // Not tracked currently
-        performanceScore: performanceScore,
-        rank: 0, // Will be set below
-      };
-    });
-
-    // Sort by performance score (descending) and assign ranks
-    performance.sort((a: any, b: any) => b.performanceScore - a.performanceScore);
-    performance.forEach((emp: any, index: number) => {
-      emp.rank = index + 1;
-    });
-
-    return performance;
+  const httpServer = createServer(app);
+
+  return httpServer;
+}
+
+// Helper function to calculate employee performance
+async function calculateEmployeePerformance(startDate: Date, endDate: Date) {
+  const { calculateWorkOrderElapsedTime } = await import("./work-timer-utils");
+  const { workOrders, workOrderMemberships, workOrderTimeTracking, employees } = await import("@shared/schema");
+  const { eq, and, gte, lte, inArray, or } = await import("drizzle-orm");
+  const { db } = await import("./db");
+
+  // Get all completed work orders in the time period
+  const completedWorkOrders = await db
+    .select()
+    .from(workOrders)
+    .where(
+      and(
+        eq(workOrders.status, "completed"),
+        gte(workOrders.completedAt, startDate),
+        lte(workOrders.completedAt, endDate)
+      )
+    );
+
+  if (completedWorkOrders.length === 0) {
+    return [];
   }
 
-  const httpServer = createServer(app);
-  return httpServer;
+  const workOrderIds = completedWorkOrders.map((wo: any) => wo.id);
+
+  // Get all team member assignments for these work orders
+  const memberships = await db
+    .select()
+    .from(workOrderMemberships)
+    .where(
+      and(
+        inArray(workOrderMemberships.workOrderId, workOrderIds),
+        eq(workOrderMemberships.role, "team_member"),
+        eq(workOrderMemberships.isActive, true)
+      )
+    );
+
+  if (memberships.length === 0) {
+    return [];
+  }
+
+  // Get all time tracking records for these work orders
+  const timeRecords = await db
+    .select()
+    .from(workOrderTimeTracking)
+    .where(inArray(workOrderTimeTracking.workOrderId, workOrderIds));
+
+  // Group time records by work order
+  const timeRecordsByWorkOrder = timeRecords.reduce((acc: any, record: any) => {
+    if (!acc[record.workOrderId]) {
+      acc[record.workOrderId] = [];
+    }
+    acc[record.workOrderId].push(record);
+    return acc;
+  }, {});
+
+  // Calculate performance for each employee
+  const employeeStats: Record<string, {
+    workOrdersCompleted: number;
+    totalElapsedHours: number;
+    employeeId: string;
+  }> = {};
+
+  memberships.forEach((membership: any) => {
+    if (!employeeStats[membership.employeeId]) {
+      employeeStats[membership.employeeId] = {
+        workOrdersCompleted: 0,
+        totalElapsedHours: 0,
+        employeeId: membership.employeeId,
+      };
+    }
+
+    const workOrder = completedWorkOrders.find((wo: any) => wo.id === membership.workOrderId);
+    if (!workOrder) return;
+
+    employeeStats[membership.employeeId].workOrdersCompleted += 1;
+
+    // Calculate elapsed time for this work order
+    const timeTrackingData = timeRecordsByWorkOrder[membership.workOrderId] || [];
+    const timerResult = calculateWorkOrderElapsedTime(
+      workOrder.startedAt,
+      workOrder.completedAt,
+      workOrder.status,
+      timeTrackingData
+    );
+
+    employeeStats[membership.employeeId].totalElapsedHours += timerResult.elapsedHours;
+  });
+
+  // Get employee details
+  const employeeIds = Object.keys(employeeStats);
+  const employeeDetails = await db
+    .select()
+    .from(employees)
+    .where(inArray(employees.id, employeeIds));
+
+  // Calculate performance scores and create result array
+  const performance = employeeDetails.map((employee: any) => {
+    const stats = employeeStats[employee.id];
+    const avgCompletionTime = stats.workOrdersCompleted > 0
+      ? stats.totalElapsedHours / stats.workOrdersCompleted
+      : 0;
+
+    // Performance score formula:
+    // Higher score for more completed work orders
+    // Higher score for faster completion times
+    // Formula: (workOrders * 100) / (avgTime + 1)
+    // The +1 prevents division by zero and gives weight to completion
+    const performanceScore = Math.round(
+      (stats.workOrdersCompleted * 100) / (avgCompletionTime + 1)
+    );
+
+    return {
+      employeeId: employee.id,
+      fullName: employee.fullName,
+      role: employee.role,
+      tasksCompleted: 0, // Not tracked currently
+      workOrdersCompleted: stats.workOrdersCompleted,
+      totalLaborHours: parseFloat(stats.totalElapsedHours.toFixed(2)),
+      avgCompletionTime: parseFloat(avgCompletionTime.toFixed(2)),
+      requisitionsProcessed: 0, // Not tracked currently
+      performanceScore: performanceScore,
+      rank: 0, // Will be set below
+    };
+  });
+
+  // Sort by performance score (descending) and assign ranks
+  performance.sort((a: any, b: any) => b.performanceScore - a.performanceScore);
+  performance.forEach((emp: any, index: number) => {
+    emp.rank = index + 1;
+  });
+
+  return performance;
 }

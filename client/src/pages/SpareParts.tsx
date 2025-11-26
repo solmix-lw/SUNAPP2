@@ -709,9 +709,9 @@ export default function SparePartsPage() {
   };
 
   // Use partsData directly if accumulatedParts is empty (e.g. after filter change) but data is available
-  const currentParts = (page === 0 && accumulatedParts.length === 0 && partsData?.items)
+  const currentParts = (page === 0 && (!accumulatedParts || accumulatedParts.length === 0) && partsData?.items)
     ? partsData.items
-    : accumulatedParts;
+    : (accumulatedParts || []);
 
   const filteredParts = currentParts?.filter((part: SparePart) => {
     const matchesSearch =

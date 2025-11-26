@@ -264,6 +264,16 @@ export interface IStorage {
   approveSupervisorSignoff(workOrderId: string, supervisorId: string, notes?: string): Promise<void>;
   rejectSupervisorSignoff(workOrderId: string, supervisorId: string, rejectionNotes: string): Promise<void>;
 
+  // Multi-Workshop Work Order Management
+  updateWorkshopStatus(workOrderId: string, workshopId: string, status: string, employeeId?: string): Promise<void>;
+  addWorkshopParts(workOrderId: string, workshopId: string, partIds: string[]): Promise<void>;
+  addWorkshopEmployees(workOrderId: string, workshopId: string, employeeIds: string[]): Promise<void>;
+  updateWorkshopNotes(workOrderId: string, workshopId: string, notes: string): Promise<void>;
+  checkAllWorkshopsCompleted(workOrderId: string): Promise<boolean>;
+  addSubWorkOrder(parentWorkOrderId: string, subWorkOrderId: string): Promise<void>;
+  getSubWorkOrders(parentWorkOrderId: string): Promise<WorkOrder[]>;
+
+
   // Work Order Required Parts
   getWorkOrderRequiredParts(workOrderId: string): Promise<WorkOrderRequiredPart[]>;
   replaceWorkOrderRequiredParts(workOrderId: string, parts: InsertWorkOrderRequiredPart[]): Promise<void>;
@@ -275,9 +285,9 @@ export interface IStorage {
   resumeWorkOrderTimer(workOrderId: string, triggeredById?: string): Promise<void>;
 
   // Work Order Cost Tracking
-  getWorkOrderLaborEntries(workOrderId: string): Promise<WorkOrderLaborEntryView[]>;
-  getWorkOrderLubricantEntries(workOrderId: string): Promise<WorkOrderLubricantEntryView[]>;
-  getWorkOrderOutsourceEntries(workOrderId: string): Promise<WorkOrderOutsourceEntryView[]>;
+  getWorkOrderLaborEntries(workOrderId: string): Promise<WorkOrderLaborEntry[]>;
+  getWorkOrderLubricantEntries(workOrderId: string): Promise<WorkOrderLubricantEntry[]>;
+  getWorkOrderOutsourceEntries(workOrderId: string): Promise<WorkOrderOutsourceEntry[]>;
   addLaborEntry(data: InsertWorkOrderLaborEntry): Promise<WorkOrderLaborEntry>;
   updateLaborEntry(id: string, data: Partial<InsertWorkOrderLaborEntry>): Promise<WorkOrderLaborEntry>;
   addLubricantEntry(data: InsertWorkOrderLubricantEntry): Promise<WorkOrderLubricantEntry>;
@@ -287,11 +297,11 @@ export interface IStorage {
   deleteOutsourceEntry(id: string): Promise<void>;
   updateWorkOrderCosts(workOrderId: string): Promise<void>;
 
-  // Standard Operating Procedures
-  getAllSOPs(filters?: { category?: string; targetRole?: string; language?: string }): Promise<StandardOperatingProcedure[]>;
-  getSOPById(id: string): Promise<StandardOperatingProcedure | undefined>;
-  createSOP(data: InsertStandardOperatingProcedure): Promise<StandardOperatingProcedure>;
-  updateSOP(id: string, data: Partial<InsertStandardOperatingProcedure>): Promise<StandardOperatingProcedure>;
+  // Standard Operating Procedures (not implemented yet)
+  // getAllSOPs(filters?: { category?: string; targetRole?: string; language?: string }): Promise<any[]>;
+  // getSOPById(id: string): Promise<any | undefined>;
+  // createSOP(data: any): Promise<any>;
+  // updateSOP(id: string, data: Partial<any>): Promise<any>;
 
   // Parts Storage Locations
   getPartStorageLocations(partId: string): Promise<PartsStorageLocationWithDetails[]>;
@@ -570,13 +580,13 @@ export class DatabaseStorage implements IStorage {
       .from(partCompatibility)
       .where(eq(partCompatibility.partId, part.id));
 
-    const makes = Array.from(new Set(compatibility.map((c) => c.make)));
-    const models = Array.from(new Set(compatibility.filter((c) => c.model).map((c) => c.model!)));
+    const makes = Array.from(new Set(compatibility.map((c: typeof partCompatibility.$inferSelect) => c.make)));
+    const models = Array.from(new Set(compatibility.filter((c: typeof partCompatibility.$inferSelect) => c.model).map((c: typeof partCompatibility.$inferSelect) => c.model!)));
 
     return {
       ...part,
-      compatibleMakes: makes,
-      compatibleModels: models,
+      compatibleMakes: makes as string[],
+      compatibleModels: models as string[],
     };
   }
 
@@ -584,8 +594,8 @@ export class DatabaseStorage implements IStorage {
   async getAllParts(): Promise<SparePartWithCompatibility[]> {
     const parts = await db.select().from(spareParts);
     // Ensure correct stock status based on quantity
-    const partsWithCorrectStatus = parts.map(p => this.ensureCorrectStockStatus(p));
-    return await Promise.all(partsWithCorrectStatus.map((p) => this.enrichPartWithCompatibility(p)));
+    const partsWithCorrectStatus = parts.map((p: SparePart) => this.ensureCorrectStockStatus(p));
+    return await Promise.all(partsWithCorrectStatus.map((p: SparePart) => this.enrichPartWithCompatibility(p)));
   }
 
   async getPartById(id: string): Promise<SparePartWithCompatibility | undefined> {
@@ -772,8 +782,8 @@ export class DatabaseStorage implements IStorage {
     const items = await query;
 
     // Ensure correct stock status based on quantity before enriching
-    const itemsWithCorrectStatus = items.map(p => this.ensureCorrectStockStatus(p));
-    const enrichedItems = await Promise.all(itemsWithCorrectStatus.map((p) => this.enrichPartWithCompatibility(p)));
+    const itemsWithCorrectStatus = items.map((p: SparePart) => this.ensureCorrectStockStatus(p));
+    const enrichedItems = await Promise.all(itemsWithCorrectStatus.map((p: SparePart) => this.enrichPartWithCompatibility(p)));
 
     return {
       items: enrichedItems,
@@ -787,7 +797,7 @@ export class DatabaseStorage implements IStorage {
       .from(spareParts)
       .groupBy(spareParts.category);
 
-    return result.map(r => r.category).filter(Boolean) as string[];
+    return result.map((r: { category: string | null }) => r.category).filter(Boolean) as string[];
   }
 
   // Compatibility operations
@@ -801,10 +811,10 @@ export class DatabaseStorage implements IStorage {
       .from(partCompatibility)
       .where(eq(partCompatibility.partId, partId));
 
-    const makes = Array.from(new Set(compatibility.map((c) => c.make)));
-    const models = Array.from(new Set(compatibility.filter((c) => c.model).map((c) => c.model!)));
+    const makes = Array.from(new Set(compatibility.map((c: typeof partCompatibility.$inferSelect) => c.make)));
+    const models = Array.from(new Set(compatibility.filter((c: typeof partCompatibility.$inferSelect) => c.model).map((c: typeof partCompatibility.$inferSelect) => c.model!)));
 
-    return { makes, models };
+    return { makes: makes as string[], models: models as string[] };
   }
 
   // Maintenance operations implementation
@@ -842,7 +852,7 @@ export class DatabaseStorage implements IStorage {
 
     // Enrich with mechanic and parts used
     const enriched = await Promise.all(
-      records.map(async (record) => {
+      records.map(async (record: MaintenanceRecord) => {
         const mechanic = record.mechanicId
           ? await this.getMechanicById(record.mechanicId)
           : undefined;
@@ -853,7 +863,7 @@ export class DatabaseStorage implements IStorage {
           .where(eq(partsUsageHistory.maintenanceRecordId, record.id));
 
         const enrichedParts = await Promise.all(
-          partsUsed.map(async (usage) => {
+          partsUsed.map(async (usage: PartsUsageHistory) => {
             const [part] = await db
               .select()
               .from(spareParts)
@@ -891,7 +901,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(partsUsageHistory.maintenanceRecordId, record.id));
 
     const enrichedParts = await Promise.all(
-      partsUsed.map(async (usage) => {
+      partsUsed.map(async (usage: PartsUsageHistory) => {
         const [part] = await db
           .select()
           .from(spareParts)
@@ -989,7 +999,7 @@ export class DatabaseStorage implements IStorage {
 
     // Fetch workshops for each garage
     const garagesWithDetails = await Promise.all(
-      allGarages.map(async (garage) => {
+      allGarages.map(async (garage: Garage) => {
         const workshopsList = await this.getWorkshopsByGarage(garage.id);
         return {
           ...garage,
@@ -1008,7 +1018,7 @@ export class DatabaseStorage implements IStorage {
 
     // Fetch details for each workshop
     const workshopsWithDetails = await Promise.all(
-      allWorkshops.map(async (workshop) => {
+      allWorkshops.map(async (workshop: Workshop) => {
         // Get garage info
         const garage = workshop.garageId
           ? await db.select().from(garages).where(eq(garages.id, workshop.garageId)).limit(1)
@@ -1030,7 +1040,7 @@ export class DatabaseStorage implements IStorage {
           ...workshop,
           garage: garage[0] || null,
           foreman: foreman[0] || null,
-          teamMembers: teamMembers.map(tm => tm.employees),
+          teamMembers: teamMembers.map((tm: any) => tm.employees),
         };
       })
     );
@@ -1052,7 +1062,7 @@ export class DatabaseStorage implements IStorage {
       .from(workOrderGarages)
       .where(eq(workOrderGarages.garageId, id));
 
-    const workOrderIds = garageWorkOrders.map(wo => wo.workOrderId);
+    const workOrderIds = garageWorkOrders.map((wo: { workOrderId: string }) => wo.workOrderId);
     const orders = workOrderIds.length > 0
       ? await db.select().from(workOrders).where(inArray(workOrders.id, workOrderIds))
       : [];
@@ -1113,7 +1123,7 @@ export class DatabaseStorage implements IStorage {
     const workshopsList = await db.select().from(workshops).where(eq(workshops.garageId, garageId));
 
     const workshopsWithDetails = await Promise.all(
-      workshopsList.map(async (workshop) => {
+      workshopsList.map(async (workshop: Workshop) => {
         const [garage] = await db.select().from(garages).where(eq(garages.id, workshop.garageId));
         let foreman = undefined;
         if (workshop.foremanId) {
@@ -1123,7 +1133,7 @@ export class DatabaseStorage implements IStorage {
         // Get workshop members
         const memberRecords = await db.select().from(workshopMembers).where(eq(workshopMembers.workshopId, workshop.id));
         const membersList = await Promise.all(
-          memberRecords.map(async (member) => {
+          memberRecords.map(async (member: WorkshopMember) => {
             const [employee] = await db.select().from(employees).where(eq(employees.id, member.employeeId));
             return employee;
           })
@@ -1190,7 +1200,7 @@ export class DatabaseStorage implements IStorage {
   async getWorkshopMembers(workshopId: string): Promise<Employee[]> {
     const memberRecords = await db.select().from(workshopMembers).where(eq(workshopMembers.workshopId, workshopId));
     const membersList = await Promise.all(
-      memberRecords.map(async (member) => {
+      memberRecords.map(async (member: WorkshopMember) => {
         const [employee] = await db.select().from(employees).where(eq(employees.id, member.employeeId));
         return employee;
       })
@@ -1221,7 +1231,7 @@ export class DatabaseStorage implements IStorage {
       .from(workOrderWorkshops)
       .where(eq(workOrderWorkshops.workshopId, workshopId));
 
-    const workOrderIds = workOrderAssignments.map(a => a.workOrderId);
+    const workOrderIds = workOrderAssignments.map((a: typeof workOrderWorkshops.$inferSelect) => a.workOrderId);
 
     let workOrdersData = [];
     let statusBreakdown: Record<string, number> = {};
@@ -1233,7 +1243,7 @@ export class DatabaseStorage implements IStorage {
         .where(inArray(workOrders.id, workOrderIds));
 
       // Calculate status breakdown
-      statusBreakdown = workOrdersData.reduce((acc, wo) => {
+      statusBreakdown = workOrdersData.reduce((acc: Record<string, number>, wo: WorkOrder) => {
         acc[wo.status] = (acc[wo.status] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
@@ -1248,7 +1258,7 @@ export class DatabaseStorage implements IStorage {
       stats: {
         totalWorkOrders: workOrdersData.length,
         totalMembers: members.length,
-        completedWorkOrders: workOrdersData.filter(wo => wo.status === 'completed').length,
+        completedWorkOrders: workOrdersData.filter((wo: WorkOrder) => wo.status === 'completed').length,
       },
     };
   }
@@ -1304,13 +1314,9 @@ export class DatabaseStorage implements IStorage {
     if (filters?.status) {
       conditions.push(eq(workOrders.status, filters.status));
     }
-    if (filters?.assignedToId) {
-      // Filter by checking if assignedToId is in the assignedToIds array
-      conditions.push(sql`${filters.assignedToId} = ANY(${workOrders.assignedToIds})`);
-    }
-    if (filters?.garageId) {
-      conditions.push(eq(workOrders.garageId, filters.garageId));
-    }
+    // NOTE: assignedToId and garageId filtering removed - these fields moved to junction tables
+    // To filter by assignedToId, use workOrderMemberships table
+    // To filter by garageId, use workOrderGarages table
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -1389,7 +1395,7 @@ export class DatabaseStorage implements IStorage {
       .where(inArray(workOrderWorkshops.workOrderId, workOrderIds));
 
     // Collect unique workshop IDs from assignments
-    const workshopIds = Array.from(new Set(workshopAssignments.map(a => a.workshopId).filter(Boolean))) as string[];
+    const workshopIds = Array.from(new Set(workshopAssignments.map((a: typeof workOrderWorkshops.$inferSelect) => a.workshopId).filter(Boolean))) as string[];
 
     // Batch fetch all related data in parallel instead of N queries per order
     const [equipmentList, garageList, workshopList, userList, requiredPartsList, memberships] = await Promise.all([
@@ -1447,10 +1453,10 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Map related data back to work orders
-    return orders.map((order: any) => {
+    return orders.map((order: WorkOrder) => {
       // Get primary workshop (or first workshop if no primary)
       const orderWorkshops = workshopAssignmentsMap.get(order.id) || [];
-      const primaryWorkshop = orderWorkshops.find(w => w.isPrimary) || orderWorkshops[0];
+      const primaryWorkshop = orderWorkshops.find((w: typeof workOrderWorkshops.$inferSelect) => w.isPrimary) || orderWorkshops[0];
 
       // Get equipment data for this order
       const equipmentData = equipmentMap.get(order.equipmentId);
@@ -1461,7 +1467,8 @@ export class DatabaseStorage implements IStorage {
         // Add equipment model and make as top-level properties for easier access in frontend
         equipmentModel: equipmentData?.model,
         equipmentMake: equipmentData?.make,
-        garage: order.garageId ? garageMap.get(order.garageId) : undefined,
+        // NOTE: garageId removed from workOrders table - now in workOrderGarages junction table
+        garage: undefined,
         workshop: primaryWorkshop ? workshopMap.get(primaryWorkshop.workshopId) : undefined,
         assignedToList: employeesMap.get(order.id) || [],
         createdBy: order.createdById ? userMap.get(order.createdById) : undefined,
@@ -1545,18 +1552,18 @@ export class DatabaseStorage implements IStorage {
           let nextNumber = 1;
           if (existingOrders.length > 0) {
             // Filter orders that match the simple format WO-YYYY-XXX (not quarter format)
-            const simpleFormatOrders = existingOrders.filter(order =>
+            const simpleFormatOrders = existingOrders.filter((order: WorkOrder) =>
               /^WO-\d{4}-\d+$/.test(order.workOrderNumber)
             );
 
             if (simpleFormatOrders.length > 0) {
               // Extract all numbers and find the maximum
               const numbers = simpleFormatOrders
-                .map(order => {
+                .map((order: WorkOrder) => {
                   const match = order.workOrderNumber.match(/WO-\d{4}-(\d+)$/);
                   return match && match[1] ? parseInt(match[1], 10) : 0;
                 })
-                .filter(n => !isNaN(n));
+                .filter((n: number) => !isNaN(n));
 
               if (numbers.length > 0) {
                 nextNumber = Math.max(...numbers) + 1 + attempt; // Add attempt number to handle race conditions
@@ -1617,10 +1624,10 @@ export class DatabaseStorage implements IStorage {
 
       // Get full details for each order
       const ordersWithDetails = await Promise.all(
-        pendingOrders.map(order => this.getWorkOrderById(order.id))
+        pendingOrders.map((order: WorkOrder) => this.getWorkOrderById(order.id))
       );
 
-      return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
+      return ordersWithDetails.filter((order: WorkOrderWithDetails | undefined) => order !== undefined) as WorkOrderWithDetails[];
     }
 
     // Get workshops where this employee is the foreman
@@ -1633,7 +1640,7 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
 
-    const workshopIds = foremanWorkshops.map(w => w.id);
+    const workshopIds = foremanWorkshops.map((w: Workshop) => w.id);
 
     // Get work orders assigned to these workshops that need team assignment
     const workOrderWorkshopLinks = await db
@@ -1641,7 +1648,7 @@ export class DatabaseStorage implements IStorage {
       .from(workOrderWorkshops)
       .where(inArray(workOrderWorkshops.workshopId, workshopIds));
 
-    const workOrderIds = workOrderWorkshopLinks.map(link => link.workOrderId);
+    const workOrderIds = workOrderWorkshopLinks.map((link: typeof workOrderWorkshops.$inferSelect) => link.workOrderId);
 
     if (workOrderIds.length === 0) {
       return [];
@@ -1687,10 +1694,10 @@ export class DatabaseStorage implements IStorage {
 
       // Get full details for each order
       const ordersWithDetails = await Promise.all(
-        activeOrders.map(order => this.getWorkOrderById(order.id))
+        activeOrders.map((order: WorkOrder) => this.getWorkOrderById(order.id))
       );
 
-      return ordersWithDetails.filter(order => order !== undefined) as WorkOrderWithDetails[];
+      return ordersWithDetails.filter((order: WorkOrderWithDetails | undefined) => order !== undefined) as WorkOrderWithDetails[];
     }
 
     // Get work orders where the foreman is assigned
@@ -1709,7 +1716,7 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
 
-    const workOrderIds = foremanMemberships.map(m => m.workOrderId);
+    const workOrderIds = foremanMemberships.map((m: WorkOrderMembership) => m.workOrderId);
 
     // Get work orders with active statuses
     const activeOrders = await db
@@ -1768,7 +1775,7 @@ export class DatabaseStorage implements IStorage {
       return [];
     }
 
-    const workOrderIds = foremanMemberships.map(m => m.workOrderId);
+    const workOrderIds = foremanMemberships.map((m: WorkOrderMembership) => m.workOrderId);
 
     // Get work orders with approved completions
     const approvedCompletions = await db
@@ -1831,42 +1838,31 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Batch fetch all related data to avoid N+1 queries
-    const orderIds = ordersList.map(o => o.id);
-    const equipmentIds = [...new Set(ordersList.map(o => o.equipmentId))];
-    const garageIds = [...new Set(ordersList.map(o => o.garageId).filter((id): id is string => id !== null))];
-    const workshopIds = [...new Set(ordersList.map(o => o.workshopId).filter((id): id is string => id !== null))];
-    const employeeIds = [...new Set(ordersList.flatMap(o => [
-      ...(o.assignedToIds || []),
-      o.createdById
-    ].filter((id): id is string => id !== null && id !== undefined)))];
+    const orderIds = ordersList.map((o: WorkOrder) => o.id);
+    const equipmentIds = Array.from(new Set(ordersList.map((o: WorkOrder) => o.equipmentId)));
+    // NOTE: garageId, workshopId, and assignedToIds fields removed from workOrders table
+    // These are now in junction tables: workOrderGarages, workOrderWorkshops, workOrderMemberships
+    const employeeIds = Array.from(new Set(ordersList.map((o: WorkOrder) => o.createdById).filter((id): id is string => id !== null && id !== undefined)));
 
     // Fetch all related data in parallel (with guards for empty arrays to avoid invalid SQL)
-    const [equipmentList, garageList, workshopList, employeeList, requiredPartsList] = await Promise.all([
+    const [equipmentList, employeeList, requiredPartsList] = await Promise.all([
       equipmentIds.length > 0 ? db.select().from(equipment).where(inArray(equipment.id, equipmentIds)) : Promise.resolve([]),
-      garageIds.length > 0 ? db.select().from(garages).where(inArray(garages.id, garageIds)) : Promise.resolve([]),
-      workshopIds.length > 0 ? db.select().from(workshops).where(inArray(workshops.id, workshopIds)) : Promise.resolve([]),
       employeeIds.length > 0 ? db.select().from(employees).where(inArray(employees.id, employeeIds)) : Promise.resolve([]),
       orderIds.length > 0 ? db.select().from(workOrderRequiredParts).where(inArray(workOrderRequiredParts.workOrderId, orderIds)) : Promise.resolve([])
     ]);
 
     // Create lookup maps for O(1) access
-    const equipmentMap = new Map(equipmentList.map(e => [e.id, e]));
-    const garageMap = new Map(garageList.map(g => [g.id, g]));
-    const workshopMap = new Map(workshopList.map(w => [w.id, w]));
-    const employeeMap = new Map(employeeList.map(e => [e.id, e]));
+    const equipmentMap = new Map(equipmentList.map((e: Equipment) => [e.id, e]));
+    const employeeMap = new Map(employeeList.map((e: Employee) => [e.id, e]));
     const requiredPartsMap = new Map<string, typeof workOrderRequiredParts.$inferSelect[]>();
-    requiredPartsList.forEach(part => {
+    requiredPartsList.forEach((part: typeof workOrderRequiredParts.$inferSelect) => {
       const existing = requiredPartsMap.get(part.workOrderId) || [];
       existing.push(part);
       requiredPartsMap.set(part.workOrderId, existing);
     });
 
     // Assemble work orders with details using in-memory lookups
-    const ordersWithDetails: WorkOrderWithDetails[] = ordersList.map(order => {
-      const assignedToList = (order.assignedToIds || [])
-        .map(id => employeeMap.get(id))
-        .filter((e): e is typeof employees.$inferSelect => e !== undefined);
-
+    const ordersWithDetails: WorkOrderWithDetails[] = ordersList.map((order: WorkOrder) => {
       const equipmentData = equipmentMap.get(order.equipmentId);
 
       return {
@@ -1875,9 +1871,8 @@ export class DatabaseStorage implements IStorage {
         // Add equipment model and make as top-level properties for easier access in frontend
         equipmentModel: equipmentData?.model,
         equipmentMake: equipmentData?.make,
-        garage: order.garageId ? garageMap.get(order.garageId) : undefined,
-        workshop: order.workshopId ? workshopMap.get(order.workshopId) : undefined,
-        assignedToList,
+        // NOTE: garage, workshop, and assignedToList removed - use junction tables instead
+        assignedToList: [],
         createdBy: order.createdById ? employeeMap.get(order.createdById) : undefined,
         requiredParts: requiredPartsMap.get(order.id) || [],
       };
@@ -2267,43 +2262,6 @@ export class DatabaseStorage implements IStorage {
         costVariancePercent: costVariancePercent.toString(),
       })
       .where(eq(workOrders.id, workOrderId));
-  }
-
-  // Standard Operating Procedures
-  async getAllSOPs(filters?: { category?: string; targetRole?: string; language?: string }): Promise<StandardOperatingProcedure[]> {
-    const conditions = [eq(standardOperatingProcedures.isActive, true)];
-
-    if (filters?.category) {
-      conditions.push(eq(standardOperatingProcedures.category, filters.category));
-    }
-    if (filters?.targetRole) {
-      conditions.push(eq(standardOperatingProcedures.targetRole, filters.targetRole));
-    }
-    if (filters?.language) {
-      conditions.push(eq(standardOperatingProcedures.language, filters.language));
-    }
-
-    const whereClause = and(...conditions);
-
-    return await db.select().from(standardOperatingProcedures).where(whereClause).orderBy(standardOperatingProcedures.title);
-  }
-
-  async getSOPById(id: string): Promise<StandardOperatingProcedure | undefined> {
-    const [result] = await db.select().from(standardOperatingProcedures).where(eq(standardOperatingProcedures.id, id));
-    return result || undefined;
-  }
-
-  async createSOP(data: InsertStandardOperatingProcedure): Promise<StandardOperatingProcedure> {
-    const [result] = await db.insert(standardOperatingProcedures).values(data).returning();
-    return result;
-  }
-
-  async updateSOP(id: string, data: Partial<InsertStandardOperatingProcedure>): Promise<StandardOperatingProcedure> {
-    const [result] = await db.update(standardOperatingProcedures).set({
-      ...data,
-      updatedAt: new Date(),
-    }).where(eq(standardOperatingProcedures.id, id)).returning();
-    return result;
   }
 
   // Parts Storage Locations
@@ -5071,6 +5029,150 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(systemSettings.id, settings.id));
     }
+  }
+
+  // Multi-Workshop Work Order Management
+  async updateWorkshopStatus(workOrderId: string, workshopId: string, status: string, employeeId?: string): Promise<void> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId));
+    if (!workOrder) throw new Error('Work order not found');
+
+    const workshops = (workOrder.workshops as any[]) || [];
+    const workshopIndex = workshops.findIndex((w: any) => w.workshopId === workshopId);
+
+    if (workshopIndex === -1) {
+      // Add new workshop entry
+      workshops.push({
+        workshopId,
+        status,
+        startTime: status === 'in_progress' ? new Date().toISOString() : null,
+        endTime: status === 'completed' ? new Date().toISOString() : null,
+        partsUsed: [],
+        employees: employeeId ? [employeeId] : [],
+        notes: ''
+      });
+    } else {
+      // Update existing workshop
+      workshops[workshopIndex].status = status;
+      if (status === 'in_progress' && !workshops[workshopIndex].startTime) {
+        workshops[workshopIndex].startTime = new Date().toISOString();
+      }
+      if (status === 'completed') {
+        workshops[workshopIndex].endTime = new Date().toISOString();
+      }
+    }
+
+    await db.update(workOrders)
+      .set({ workshops: workshops as any })
+      .where(eq(workOrders.id, workOrderId));
+
+    // Check if all workshops are completed and update main work order status
+    const allCompleted = await this.checkAllWorkshopsCompleted(workOrderId);
+    if (allCompleted && workOrder.status !== 'completed') {
+      // All workshops done, but keep existing approval flow
+      // Don't auto-complete, just mark as ready for final approval
+      await db.update(workOrders)
+        .set({ status: 'pending_verification' })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  }
+
+  async addWorkshopParts(workOrderId: string, workshopId: string, partIds: string[]): Promise<void> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId));
+    if (!workOrder) throw new Error('Work order not found');
+
+    const workshops = (workOrder.workshops as any[]) || [];
+    const workshopIndex = workshops.findIndex((w: any) => w.workshopId === workshopId);
+
+    if (workshopIndex !== -1) {
+      const existingParts = workshops[workshopIndex].partsUsed || [];
+      workshops[workshopIndex].partsUsed = [...new Set([...existingParts, ...partIds])];
+
+      await db.update(workOrders)
+        .set({ workshops: workshops as any })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  }
+
+  async addWorkshopEmployees(workOrderId: string, workshopId: string, employeeIds: string[]): Promise<void> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId));
+    if (!workOrder) throw new Error('Work order not found');
+
+    const workshops = (workOrder.workshops as any[]) || [];
+    const workshopIndex = workshops.findIndex((w: any) => w.workshopId === workshopId);
+
+    if (workshopIndex !== -1) {
+      const existingEmployees = workshops[workshopIndex].employees || [];
+      workshops[workshopIndex].employees = [...new Set([...existingEmployees, ...employeeIds])];
+
+      await db.update(workOrders)
+        .set({ workshops: workshops as any })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  }
+
+  async updateWorkshopNotes(workOrderId: string, workshopId: string, notes: string): Promise<void> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId));
+    if (!workOrder) throw new Error('Work order not found');
+
+    const workshops = (workOrder.workshops as any[]) || [];
+    const workshopIndex = workshops.findIndex((w: any) => w.workshopId === workshopId);
+
+    if (workshopIndex !== -1) {
+      workshops[workshopIndex].notes = notes;
+
+      await db.update(workOrders)
+        .set({ workshops: workshops as any })
+        .where(eq(workOrders.id, workOrderId));
+    }
+  }
+
+  async checkAllWorkshopsCompleted(workOrderId: string): Promise<boolean> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, workOrderId));
+    if (!workOrder) return false;
+
+    const workshops = (workOrder.workshops as any[]) || [];
+    const subWorkOrderIds = (workOrder.subWorkorderIds as string[]) || [];
+
+    // Check if all workshops are completed
+    const allWorkshopsCompleted = workshops.length > 0 && workshops.every((w: any) => w.status === 'completed');
+
+    // Check if all sub-workorders are completed
+    if (subWorkOrderIds.length > 0) {
+      const subWorkOrders = await db.select()
+        .from(workOrders)
+        .where(inArray(workOrders.id, subWorkOrderIds));
+
+      const allSubWorkOrdersCompleted = subWorkOrders.every(wo => wo.status === 'completed');
+      return allWorkshopsCompleted && allSubWorkOrdersCompleted;
+    }
+
+    return allWorkshopsCompleted;
+  }
+
+  async addSubWorkOrder(parentWorkOrderId: string, subWorkOrderId: string): Promise<void> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, parentWorkOrderId));
+    if (!workOrder) throw new Error('Parent work order not found');
+
+    const subWorkOrderIds = (workOrder.subWorkorderIds as string[]) || [];
+    if (!subWorkOrderIds.includes(subWorkOrderId)) {
+      subWorkOrderIds.push(subWorkOrderId);
+
+      await db.update(workOrders)
+        .set({ subWorkorderIds: subWorkOrderIds as any })
+        .where(eq(workOrders.id, parentWorkOrderId));
+    }
+  }
+
+  async getSubWorkOrders(parentWorkOrderId: string): Promise<WorkOrder[]> {
+    const [workOrder] = await db.select().from(workOrders).where(eq(workOrders.id, parentWorkOrderId));
+    if (!workOrder) return [];
+
+    const subWorkOrderIds = (workOrder.subWorkorderIds as string[]) || [];
+    if (subWorkOrderIds.length === 0) return [];
+
+    return await db.select()
+      .from(workOrders)
+      .where(inArray(workOrders.id, subWorkOrderIds));
   }
 }
 

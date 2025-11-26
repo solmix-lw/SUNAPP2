@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -7,11 +7,26 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { nanoid } from "nanoid";
+import type { SparePart } from "@shared/schema";
 
 type RequestPartsDialogProps = {
   open: boolean;
@@ -30,6 +45,102 @@ type LineItem = {
   quantityRequested: number;
   remarks: string;
 };
+
+
+
+function PartSelector({
+  value,
+  onChange,
+  parts,
+  language,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  parts: SparePart[];
+  language: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const filteredParts = useMemo(() => parts.filter((part) =>
+    part.partName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    part.partNumber.toLowerCase().includes(searchTerm.toLowerCase())
+  ).slice(0, 50), [parts, searchTerm]);
+
+  const selectedPart = parts.find((p) => p.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+        >
+          <span className="truncate">
+            {selectedPart
+              ? `${selectedPart.partName} (${selectedPart.partNumber})`
+              : (language === "am" ? "አማራጭ" : "Optional")}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[300px] p-0" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder={language === "am" ? "ፈልግ..." : "Search parts..."}
+            value={searchTerm}
+            onValueChange={setSearchTerm}
+          />
+          <CommandList>
+            <CommandEmpty>
+              {language === "am" ? "ምንም አልተገኘም" : "No parts found."}
+            </CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="none"
+                onSelect={() => {
+                  onChange("");
+                  setOpen(false);
+                }}
+              >
+                <Check
+                  className={cn(
+                    "mr-2 h-4 w-4",
+                    !value ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                {language === "am" ? "ምንም" : "None"}
+              </CommandItem>
+              {filteredParts.map((part) => (
+                <CommandItem
+                  key={part.id}
+                  value={part.id}
+                  onSelect={() => {
+                    onChange(part.id);
+                    setOpen(false);
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      value === part.id ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  <div className="flex flex-col">
+                    <span>{part.partName}</span>
+                    <span className="text-xs text-muted-foreground">{part.partNumber}</span>
+                  </div>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function RequestPartsDialog({
   open,
@@ -52,10 +163,14 @@ export function RequestPartsDialog({
   ]);
 
   // Fetch spare parts for autocomplete
-  const { data: spareParts = [] } = useQuery<any[]>({
-    queryKey: ["/api/parts"],
-    enabled: open,
-  });
+  // Fetch spare parts for autocomplete using the shared SparePart type
+  const { data: sparePartsResponse } = useQuery<{ items: SparePart[] }>(
+    {
+      queryKey: ["/api/parts"],
+      enabled: open,
+    }
+  );
+  const spareParts = sparePartsResponse?.items ?? [];
 
   const createRequisitionMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -67,8 +182,8 @@ export function RequestPartsDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/work-orders"] });
       toast({
         title: language === "am" ? "ተሳክቷል" : "Success",
-        description: language === "am" 
-          ? "የእቃ ጥያቄ በተሳካ ሁኔታ ተፈጥሯል" 
+        description: language === "am"
+          ? "የእቃ ጥያቄ በተሳካ ሁኔታ ተፈጥሯል"
           : "Parts requisition created successfully",
       });
       onOpenChange(false);
@@ -137,11 +252,11 @@ export function RequestPartsDialog({
         lines.map((line) =>
           line.id === lineId
             ? {
-                ...line,
-                sparePartId: partId,
-                description: `${part.partName} (${part.partNumber})`,
-                unitOfMeasure: part.unitOfMeasure || "pcs",
-              }
+              ...line,
+              sparePartId: partId,
+              description: `${part.partName} (${part.partNumber})`,
+              unitOfMeasure: "pcs",
+            }
             : line
         )
       );
@@ -154,8 +269,8 @@ export function RequestPartsDialog({
     if (hasEmptyDescription) {
       toast({
         title: language === "am" ? "ማስጠንቀቂያ" : "Validation Error",
-        description: language === "am" 
-          ? "ሁሉም ወረፎች መግለጫ ሊኖራቸው ይገባል" 
+        description: language === "am"
+          ? "ሁሉም ወረፎች መግለጫ ሊኖራቸው ይገባል"
           : "All line items must have a description",
         variant: "destructive",
       });
@@ -166,8 +281,8 @@ export function RequestPartsDialog({
     if (hasInvalidQuantity) {
       toast({
         title: language === "am" ? "ማስጠንቀቂያ" : "Validation Error",
-        description: language === "am" 
-          ? "መጠን ቢያንስ 1 መሆን አለበት" 
+        description: language === "am"
+          ? "መጠን ቢያንስ 1 መሆን አለበት"
           : "Quantity must be at least 1",
         variant: "destructive",
       });
@@ -200,8 +315,8 @@ export function RequestPartsDialog({
             {language === "am" ? "የእቃ ጥያቄ ቅጽ" : "Item Requisition Form"}
           </DialogTitle>
           <DialogDescription>
-            {language === "am" 
-              ? `የሥራ ትዕዛዝ ${workOrderNumber} - የሚፈልጓቸውን እቃዎች ዝርዝር ያስገቡ` 
+            {language === "am"
+              ? `የሥራ ትዕዛዝ ${workOrderNumber} - የሚፈልጓቸውን እቃዎች ዝርዝር ያስገቡ`
               : `Work Order ${workOrderNumber} - Request parts needed for this job`}
           </DialogDescription>
         </DialogHeader>
@@ -223,22 +338,12 @@ export function RequestPartsDialog({
                           <Label>
                             {language === "am" ? "ከካታሎግ ምረጥ" : "Select from Catalog"}
                           </Label>
-                          <Select
+                          <PartSelector
                             value={line.sparePartId || ""}
-                            onValueChange={(value) => handlePartSelect(line.id, value)}
-                          >
-                            <SelectTrigger data-testid={`select-part-${index}`}>
-                              <SelectValue placeholder={language === "am" ? "አማራጭ" : "Optional"} />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">{language === "am" ? "ምንም" : "None"}</SelectItem>
-                              {spareParts.map((part) => (
-                                <SelectItem key={part.id} value={part.id}>
-                                  {part.partName} ({part.partNumber})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            onChange={(value) => handlePartSelect(line.id, value)}
+                            parts={spareParts}
+                            language={language}
+                          />
                         </div>
                         <div>
                           <Label>
