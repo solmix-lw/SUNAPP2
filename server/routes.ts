@@ -1332,6 +1332,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get single workshop by ID (for editing)
+  app.get("/api/workshops/:id", async (req, res) => {
+    try {
+      const workshopId = req.params.id;
+      
+      // Skip if it looks like a sub-route (has additional path segments handled elsewhere)
+      if (workshopId === 'members' || workshopId === 'details') {
+        return res.status(404).json({ error: "Workshop not found" });
+      }
+      
+      const workshop = await storage.getWorkshopById(workshopId);
+      if (!workshop) {
+        return res.status(404).json({ error: "Workshop not found" });
+      }
+      
+      // Get workshop members for display
+      const members = await storage.getWorkshopMembers(workshopId);
+      
+      res.json({ ...workshop, membersList: members });
+    } catch (error) {
+      console.error("Error fetching workshop:", error);
+      res.status(500).json({ error: "Failed to fetch workshop" });
+    }
+  });
+
   app.get("/api/workshops/:workshopId/members", async (req, res) => {
     try {
       const members = await storage.getWorkshopMembers(req.params.workshopId);
@@ -6921,6 +6946,72 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     } catch (error: any) {
       console.error("Error calculating yearly performance:", error);
       res.status(500).json({ error: "Failed to calculate yearly performance" });
+    }
+  });
+
+  // ==================== Ethiopian Year Management ====================
+
+  // Get Ethiopian year info
+  app.get("/api/ethiopian-year/info", isAuthenticated, async (_req, res) => {
+    try {
+      const { getEthiopianYearInfo } = await import("./ethiopian-calendar");
+      const yearInfo = getEthiopianYearInfo();
+      
+      // Get system settings for active year and lock status
+      const settings = await storage.getSystemSettings();
+      
+      res.json({
+        ...yearInfo,
+        nextNewYearDate: yearInfo.nextNewYearDate.toISOString(),
+        activeYear: settings?.activeEthiopianYear || yearInfo.currentEthiopianYear,
+        lastClosureDate: settings?.lastYearClosureDate?.toISOString() || null,
+        planningTargetsLocked: settings?.planningTargetsLocked ?? true,
+      });
+    } catch (error: any) {
+      console.error("Error fetching Ethiopian year info:", error);
+      res.status(500).json({ error: "Failed to fetch Ethiopian year info" });
+    }
+  });
+
+  // Close Ethiopian year
+  app.post("/api/ethiopian-year/close", isCEOOrAdmin, async (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { notes } = req.body;
+      
+      const closureLog = await storage.closeEthiopianYear(user.id, notes);
+      res.json(closureLog);
+    } catch (error: any) {
+      console.error("Error closing Ethiopian year:", error);
+      res.status(500).json({ error: error.message || "Failed to close Ethiopian year" });
+    }
+  });
+
+  // Get year closure logs
+  app.get("/api/year-closure-logs", isAuthenticated, async (_req, res) => {
+    try {
+      const logs = await storage.getYearClosureLogs();
+      res.json(logs);
+    } catch (error: any) {
+      console.error("Error fetching year closure logs:", error);
+      res.status(500).json({ error: "Failed to fetch year closure logs" });
+    }
+  });
+
+  // Lock/unlock planning targets
+  app.post("/api/planning-targets/lock", isCEOOrAdmin, async (req, res) => {
+    try {
+      const { locked } = req.body;
+      
+      if (typeof locked !== "boolean") {
+        return res.status(400).json({ error: "Invalid locked value" });
+      }
+      
+      await storage.updatePlanningTargetsLockStatus(locked);
+      res.json({ success: true, locked });
+    } catch (error: any) {
+      console.error("Error updating planning targets lock status:", error);
+      res.status(500).json({ error: "Failed to update planning targets lock status" });
     }
   });
 
